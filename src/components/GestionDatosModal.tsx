@@ -8,9 +8,12 @@ import {
   importPartidos,
   exportEntrenamientosSoloNuevos,
   importEntrenamientos,
-  exportEvaluacionesDI,
-  exportEvaluacionesDIViews,
-  importEvaluacionesDI,
+  exportEvaluacionesDIIA,
+  exportEvaluacionesDIPersonal,
+  exportEvaluacionesDIViewsIA,
+  exportEvaluacionesDIViewsPersonal,
+  importEvaluacionesDIIA,
+  importEvaluacionesDIPersonal,
 } from '../services/googleSheetsService';
 import { normalizePlayerRatings } from '../utils/playerRating';
 
@@ -54,14 +57,6 @@ export default function GestionDatosModal({
   setEntrenos,
 }: GestionDatosModalProps) {
   const [loading, setLoading] = useState<string | null>(null);
-
-  const isIADetailEvaluation = (ev: any) =>
-    Array.isArray(ev?.bloques) && ev.bloques.length > 0;
-
-  const keepEvaluacionesByKind = (player: any, kind: 'ia' | 'personal') => {
-    const evals = Array.isArray(player?.evaluacionesDI) ? player.evaluacionesDI : [];
-    return evals.filter((ev: any) => (kind === 'ia' ? isIADetailEvaluation(ev) : !isIADetailEvaluation(ev)));
-  };
 
   const handleExportPlantilla = async () => {
     if (players.length === 0) {
@@ -198,29 +193,28 @@ export default function GestionDatosModal({
     );
   };
 
-  const handleExportPonderacionIA = async () => {
+  const handleExportFormularioIA = async () => {
     if (players.length === 0) {
-      Alert.alert('Aviso', 'No hay plantilla; añade jugadores antes de exportar ponderación IA.');
+      Alert.alert('Aviso', 'No hay plantilla; añade jugadores antes de exportar la ponderación IA.');
       return;
     }
     setLoading('formIA');
     try {
-      const payload = players.map((p) => ({ ...p, evaluacionesDI: keepEvaluacionesByKind(p, 'ia') }));
-      const result = await exportEvaluacionesDI(payload);
+      const result = await exportEvaluacionesDIIA(players);
       if (!result.success) {
         Alert.alert('Error', result.message);
         return;
       }
-      const viewsResult = await exportEvaluacionesDIViews(players);
+      const viewsResult = await exportEvaluacionesDIViewsIA(players);
       if (viewsResult.success) {
         Alert.alert(
           'Éxito',
-          `${result.message}\nVistas D.I. actualizadas (IA: ${viewsResult.iaRows ?? 0} filas, Personal: ${viewsResult.personalRows ?? 0} filas, Jugadores: ${viewsResult.players ?? 0}).`
+          `${result.message}\nVista IA actualizada (${viewsResult.iaRows ?? 0} filas).`
         );
       } else {
         Alert.alert(
           'Aviso',
-          `${result.message}\nLas vistas D.I. no se pudieron actualizar: ${viewsResult.message}`
+          `${result.message}\nLa vista IA no se pudo actualizar: ${viewsResult.message}`
         );
       }
     } catch (e) {
@@ -230,14 +224,14 @@ export default function GestionDatosModal({
     }
   };
 
-  const handleImportPonderacionIA = async () => {
+  const handleImportFormularioIA = async () => {
     if (players.length === 0) {
       Alert.alert('Aviso', 'Importa primero la plantilla o crea jugadores en el dispositivo.');
       return;
     }
     Alert.alert(
       'Importar ponderación IA',
-      '¿Traer la hoja Evaluacion_DI desde Google Sheets? Se importará solo la parte de ponderación IA.',
+      '¿Traer solo evaluaciones de tipo IA desde la hoja Evaluacion_DI? Se actualizarán solo esos registros.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -245,17 +239,9 @@ export default function GestionDatosModal({
           onPress: async () => {
             setLoading('formIA');
             try {
-              const result = await importEvaluacionesDI(players);
+              const result = await importEvaluacionesDIIA(players);
               if (result.success && result.data) {
-                const byId = new Map((result.data || []).map((p: any) => [String(p?.id || ''), p]));
-                const merged = players.map((current: any) => {
-                  const imported = byId.get(String(current?.id || ''));
-                  if (!imported) return current;
-                  const currentPersonal = keepEvaluacionesByKind(current, 'personal');
-                  const importedIA = keepEvaluacionesByKind(imported, 'ia');
-                  return { ...current, ...imported, evaluacionesDI: [...currentPersonal, ...importedIA] };
-                });
-                const normalized = merged.map((p: any, i: number) =>
+                const normalized = result.data.map((p, i) =>
                   normalizePlayerRatings(p, players[i], { partidos, entrenos })
                 );
                 await setPlayers(normalized);
@@ -276,25 +262,27 @@ export default function GestionDatosModal({
 
   const handleExportFormularioPersonal = async () => {
     if (players.length === 0) {
-      Alert.alert('Aviso', 'No hay plantilla; añade jugadores antes de exportar formulario personal.');
+      Alert.alert('Aviso', 'No hay plantilla; añade jugadores antes de exportar el formulario personal.');
       return;
     }
     setLoading('formPersonal');
     try {
-      const payload = players.map((p) => ({ ...p, evaluacionesDI: keepEvaluacionesByKind(p, 'personal') }));
-      const result = await exportEvaluacionesDI(payload);
+      const result = await exportEvaluacionesDIPersonal(players);
       if (!result.success) {
         Alert.alert('Error', result.message);
         return;
       }
-      const viewsResult = await exportEvaluacionesDIViews(players);
+      const viewsResult = await exportEvaluacionesDIViewsPersonal(players);
       if (viewsResult.success) {
         Alert.alert(
           'Éxito',
-          `${result.message}\nVistas D.I. actualizadas (IA: ${viewsResult.iaRows ?? 0} filas, Personal: ${viewsResult.personalRows ?? 0} filas, Jugadores: ${viewsResult.players ?? 0}).`
+          `${result.message}\nVista Personal actualizada (${viewsResult.personalRows ?? 0} filas).`
         );
       } else {
-        Alert.alert('Aviso', `${result.message}\nLas vistas D.I. no se pudieron actualizar: ${viewsResult.message}`);
+        Alert.alert(
+          'Aviso',
+          `${result.message}\nLa vista Personal no se pudo actualizar: ${viewsResult.message}`
+        );
       }
     } catch (e) {
       Alert.alert('Error', `Error: ${(e as Error).message}`);
@@ -310,7 +298,7 @@ export default function GestionDatosModal({
     }
     Alert.alert(
       'Importar formulario personal',
-      '¿Traer la hoja Evaluacion_DI desde Google Sheets? Se importará solo la parte de formulario personal.',
+      '¿Traer solo evaluaciones de tipo formulario personal desde la hoja Evaluacion_DI?',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -318,17 +306,9 @@ export default function GestionDatosModal({
           onPress: async () => {
             setLoading('formPersonal');
             try {
-              const result = await importEvaluacionesDI(players);
+              const result = await importEvaluacionesDIPersonal(players);
               if (result.success && result.data) {
-                const byId = new Map((result.data || []).map((p: any) => [String(p?.id || ''), p]));
-                const merged = players.map((current: any) => {
-                  const imported = byId.get(String(current?.id || ''));
-                  if (!imported) return current;
-                  const currentIA = keepEvaluacionesByKind(current, 'ia');
-                  const importedPersonal = keepEvaluacionesByKind(imported, 'personal');
-                  return { ...current, ...imported, evaluacionesDI: [...currentIA, ...importedPersonal] };
-                });
-                const normalized = merged.map((p: any, i: number) =>
+                const normalized = result.data.map((p, i) =>
                   normalizePlayerRatings(p, players[i], { partidos, entrenos })
                 );
                 await setPlayers(normalized);
@@ -347,16 +327,82 @@ export default function GestionDatosModal({
     );
   };
 
+  const resetEvaluacionesLocales = (kind: 'ia' | 'personal' | 'all') => {
+    if (players.length === 0) {
+      Alert.alert('Aviso', 'No hay jugadores para reiniciar.');
+      return;
+    }
+    const titleByKind = {
+      ia: 'Reiniciar ponderación IA',
+      personal: 'Reiniciar formulario personal',
+      all: 'Reiniciar todas las evaluaciones',
+    } as const;
+    const keyByKind = {
+      ia: 'resetIA',
+      personal: 'resetPersonal',
+      all: 'resetAll',
+    } as const;
+    const msgByKind = {
+      ia: 'Se borrarán solo las evaluaciones IA guardadas en este dispositivo. No afecta partidos/entrenos/plantilla.',
+      personal: 'Se borrarán solo los formularios personales guardados en este dispositivo. No afecta partidos/entrenos/plantilla.',
+      all: 'Se borrarán todas las evaluaciones (IA + personal) guardadas en este dispositivo.',
+    } as const;
+
+    Alert.alert(titleByKind[kind], msgByKind[kind], [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Borrar',
+        style: 'destructive',
+        onPress: async () => {
+          setLoading(keyByKind[kind]);
+          try {
+            let removedCount = 0;
+            const updated = players.map((p: any, i: number) => {
+              const evals = Array.isArray(p?.evaluacionesDI) ? p.evaluacionesDI : [];
+              const next =
+                kind === 'all'
+                  ? []
+                  : evals.filter((ev: any) => {
+                      const isPersonal = !!(ev?.personalForm && typeof ev.personalForm === 'object');
+                      return kind === 'ia' ? isPersonal : !isPersonal;
+                    });
+              removedCount += Math.max(0, evals.length - next.length);
+              return normalizePlayerRatings(
+                { ...p, evaluacionesDI: next },
+                players[i],
+                { partidos, entrenos }
+              );
+            });
+            await setPlayers(updated);
+            Alert.alert('Hecho', `Borradas ${removedCount} evaluación(es) en local.`);
+          } catch (e) {
+            Alert.alert('Error', `Error: ${(e as Error).message}`);
+          } finally {
+            setLoading(null);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleResetFormularioIA = () => resetEvaluacionesLocales('ia');
+  const handleResetFormularioPersonal = () => resetEvaluacionesLocales('personal');
+  const handleResetFormulariosTodo = () => resetEvaluacionesLocales('all');
+
   const RowAction = ({
     label,
     loadingKey,
     onExport,
     onImport,
+    onReset,
+    resetLoadingKey,
   }: {
     label: string;
     loadingKey: string;
     onExport: () => void;
     onImport: () => void;
+    onReset?: () => void;
+    resetLoadingKey?: string;
   }) => (
     <View style={styles.rowAction}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -383,6 +429,19 @@ export default function GestionDatosModal({
             <Text style={styles.actionBtnTxt}>IMPORTAR</Text>
           )}
         </TouchableOpacity>
+        {onReset ? (
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.resetBtn]}
+            onPress={onReset}
+            disabled={!!loading}
+          >
+            {loading === (resetLoadingKey || loadingKey) ? (
+              <ActivityIndicator color="#FFF" size="small" />
+            ) : (
+              <Text style={styles.actionBtnTxt}>BORRAR</Text>
+            )}
+          </TouchableOpacity>
+        ) : null}
       </View>
     </View>
   );
@@ -415,15 +474,30 @@ export default function GestionDatosModal({
           <RowAction
             label="Ponderación IA"
             loadingKey="formIA"
-            onExport={handleExportPonderacionIA}
-            onImport={handleImportPonderacionIA}
+            onExport={handleExportFormularioIA}
+            onImport={handleImportFormularioIA}
+            onReset={handleResetFormularioIA}
+            resetLoadingKey="resetIA"
           />
           <RowAction
             label="Formulario Personal"
             loadingKey="formPersonal"
             onExport={handleExportFormularioPersonal}
             onImport={handleImportFormularioPersonal}
+            onReset={handleResetFormularioPersonal}
+            resetLoadingKey="resetPersonal"
           />
+          <TouchableOpacity
+            style={[styles.closeBtn, styles.resetAllBtn]}
+            onPress={handleResetFormulariosTodo}
+            disabled={!!loading}
+          >
+            {loading === 'resetAll' ? (
+              <ActivityIndicator color="#FFF" size="small" />
+            ) : (
+              <Text style={styles.closeBtnTxt}>REINICIAR TODAS LAS EVALUACIONES (LOCAL)</Text>
+            )}
+          </TouchableOpacity>
 
           <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
             <Text style={styles.closeBtnTxt}>CERRAR</Text>
@@ -469,6 +543,7 @@ const styles = StyleSheet.create({
   },
   exportBtn: { backgroundColor: '#2E7D32' },
   importBtn: { backgroundColor: '#1565C0' },
+  resetBtn: { backgroundColor: '#B71C1C' },
   actionBtnTxt: { color: '#FFF', fontSize: 10, fontWeight: 'bold' },
   closeBtn: {
     backgroundColor: '#C62828',
@@ -477,5 +552,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 15,
   },
+  resetAllBtn: { backgroundColor: '#8E24AA', marginTop: 6 },
   closeBtnTxt: { color: '#FFF', fontWeight: 'bold' },
 });

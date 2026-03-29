@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -41,7 +41,6 @@ export interface MatchItem {
   ubicacionMaps?: string;
   tipoCompeticion?: string;
   lugarQuedada?: string;
-  exportarUbicacion?: boolean;
   lugar: string;
   tipo: string;
   golesFavor: number;
@@ -70,7 +69,6 @@ export interface EventoCalendarioStored {
   observaciones: string;
   descripcion: string;
   ubicacionMaps: string;
-  exportarUbicacion?: boolean;
   ubicacion: string;
   notas: string;
 }
@@ -127,13 +125,6 @@ function formatDateLabel(key: string): string {
   const [y, m, d] = key.split('-');
   if (d && m && y) return `${d}/${m}/${y}`;
   return key;
-}
-
-function formatDateInput(raw: string): string {
-  const digits = String(raw || '').replace(/\D/g, '').slice(0, 8);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
 }
 
 function extractHora(fechaStr: string | undefined): string {
@@ -196,7 +187,6 @@ function eventoToMatch(ev: EventoCalendarioStored): MatchItem {
     ubicacionMaps: ev.ubicacionMaps || '',
     tipoCompeticion: ev.tipoCompeticion || '',
     lugarQuedada: ev.lugarQuedada || '',
-    exportarUbicacion: ev.exportarUbicacion !== false,
     lugar: String(lugar).toUpperCase(),
     tipo: tipoEvento,
     golesFavor: 0,
@@ -278,39 +268,34 @@ function useShareMatch() {
     const lines: string[] = [];
     if (!match.isEvento) {
       lines.push('⚽ Partido');
-      lines.push(`Rival: ${match.rival}`);
+      lines.push(`🆚 Rival: ${match.rival}`);
       lines.push(`📅 Fecha: ${formatDateLabel(parseDateKey(match.fecha))}`);
       lines.push(`🕒 Hora: ${match.hora}`);
       lines.push(`📍 Lugar: ${match.lugar}`);
     } else if ((match.tipo || 'Otro') === 'Partido') {
       lines.push('📅 Evento: Partido');
       lines.push(`📅 Fecha: ${formatDateLabel(parseDateKey(match.fecha))}`);
-      if (match.tipoCompeticion) lines.push(`Tipo de competicion: ${match.tipoCompeticion}`);
-      lines.push(`Rival: ${match.rival}`);
+      if (match.tipoCompeticion) lines.push(`🏆 Tipo de competición: ${match.tipoCompeticion}`);
+      lines.push(`🆚 Rival: ${match.rival}`);
       lines.push(`🕒 Hora del partido: ${match.hora}`);
-      lines.push(`Lugar del partido: ${match.lugar}`);
+      lines.push(`📍 Lugar del partido: ${match.lugar}`);
       if (match.lugarQuedada) lines.push(`📌 Lugar de quedada: ${match.lugarQuedada}`);
       if (match.horaQuedada && match.horaQuedada !== '--') lines.push(`🕘 Hora de quedada: ${match.horaQuedada}`);
-      if (match.equipacion) lines.push(`Equipación: ${match.equipacion}`);
-      if (match.observaciones) lines.push(`Observaciones: ${match.observaciones}`);
-      if (match.ubicacionMaps && match.exportarUbicacion !== false) {
-        const mapsShort = match.lugar
-          ? `https://maps.google.com/?q=${encodeURIComponent(match.lugar)}`
-          : match.ubicacionMaps;
-        lines.push(`Ver ubicación: ${mapsShort}`);
-      }
+      if (match.equipacion) lines.push(`👕 Equipación: ${match.equipacion}`);
+      if (match.observaciones) lines.push(`📝 Observaciones: ${match.observaciones}`);
+      if (match.ubicacionMaps) lines.push(`🗺 Google Maps: ${match.ubicacionMaps}`);
     } else if (match.tipo === 'Entrenamiento') {
       lines.push('📅 Evento: Entrenamiento');
       lines.push(`📅 Fecha: ${formatDateLabel(parseDateKey(match.fecha))}`);
       lines.push(`🕒 Hora inicio: ${match.hora}`);
       if (match.horaFin && match.horaFin !== '--') lines.push(`⏱ Hora fin: ${match.horaFin}`);
-      if (match.observaciones) lines.push(`Observaciones: ${match.observaciones}`);
+      if (match.observaciones) lines.push(`📝 Observaciones: ${match.observaciones}`);
     } else {
       lines.push('📅 Evento: Otro');
       lines.push(`📅 Fecha: ${formatDateLabel(parseDateKey(match.fecha))}`);
       lines.push(`🕒 Hora inicio: ${match.hora}`);
       if (match.horaFin && match.horaFin !== '--') lines.push(`⏱ Hora fin: ${match.horaFin}`);
-      if (match.descripcion) lines.push(`Descripción: ${match.descripcion}`);
+      if (match.descripcion) lines.push(`📝 Descripción: ${match.descripcion}`);
     }
     Share.share({ message: lines.join('\n'), title }).catch(() => {});
   }, []);
@@ -334,7 +319,6 @@ export interface EventFormData {
   observaciones: string;
   descripcion: string;
   ubicacionMaps: string;
-  exportarUbicacion?: boolean;
 }
 
 function parseTimeToMinutes(t: string): number {
@@ -411,7 +395,7 @@ function useDeviceCalendar() {
 // COMPONENTES
 // -----------------------------------------------------------------------------
 
-const WEEK_DAYS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+const WEEK_DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 function ViewToggle({ mode, onModeChange }: { mode: ViewMode; onModeChange: (m: ViewMode) => void }) {
   return (
@@ -539,7 +523,6 @@ const defaultEventForm = (dateKey: string, match: MatchItem | null): EventFormDa
   observaciones: match?.observaciones || '',
   descripcion: '',
   ubicacionMaps: match?.ubicacionMaps || '',
-  exportarUbicacion: match?.isEvento ? (match.exportarUbicacion !== false) : true,
 });
 
 function EventModal({
@@ -558,47 +541,34 @@ function EventModal({
   const [tipoEvento, setTipoEvento] = useState<EventKind>('Partido');
   const [tipoCompeticion, setTipoCompeticion] = useState('');
   const [rival, setRival] = useState('');
-  const [dateKey, setDateKey] = useState(formatDateLabel(defaultDate()));
+  const [dateKey, setDateKey] = useState(defaultDate());
   const [horaInicio, setHoraInicio] = useState('10:00');
   const [horaFin, setHoraFin] = useState('11:30');
   const [horaQuedada, setHoraQuedada] = useState('09:30');
-  const [equipacion, setEquipación] = useState('');
+  const [equipacion, setEquipacion] = useState('');
   const [lugarPartido, setLugarPartido] = useState('');
   const [lugarQuedada, setLugarQuedada] = useState('');
   const [observaciones, setObservaciones] = useState('');
-  const [descripcion, setDescripción] = useState('');
+  const [descripcion, setDescripcion] = useState('');
   const [ubicacionMaps, setUbicacionMaps] = useState('');
-  const [exportarUbicacion, setExportarUbicacion] = useState(true);
 
   React.useEffect(() => {
     if (form) {
       setTipoEvento(form.tipoEvento || 'Otro');
       setTipoCompeticion(form.tipoCompeticion || '');
       setRival(form.rival || '');
-      setDateKey(formatDateLabel(form.dateKey || defaultDate()));
+      setDateKey(form.dateKey || defaultDate());
       setHoraInicio(form.horaInicio);
       setHoraFin(form.horaFin);
       setHoraQuedada(form.horaQuedada);
-      setEquipación(form.equipacion);
+      setEquipacion(form.equipacion);
       setLugarPartido(form.lugarPartido || '');
       setLugarQuedada(form.lugarQuedada || '');
       setObservaciones(form.observaciones);
-      setDescripción(form.descripcion || '');
+      setDescripcion(form.descripcion || '');
       setUbicacionMaps(form.ubicacionMaps);
-      setExportarUbicacion(form.exportarUbicacion !== false);
     }
   }, [form]);
-
-  React.useEffect(() => {
-    if (tipoEvento !== 'Partido') return;
-    const place = (lugarPartido || '').trim();
-    if (!place) {
-      setUbicacionMaps('');
-      return;
-    }
-    const generated = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place)}`;
-    setUbicacionMaps(generated);
-  }, [tipoEvento, lugarPartido]);
 
   const handleSave = useCallback(() => {
     if (!form) return;
@@ -617,9 +587,8 @@ function EventModal({
       observaciones: observaciones.trim(),
       descripcion: descripcion.trim(),
       ubicacionMaps: ubicacionMaps.trim(),
-      exportarUbicacion: !!exportarUbicacion,
     });
-  }, [form, tipoEvento, tipoCompeticion, rival, dateKey, horaInicio, horaFin, horaQuedada, equipacion, lugarPartido, lugarQuedada, observaciones, descripcion, ubicacionMaps, exportarUbicacion, onSave]);
+  }, [form, tipoEvento, tipoCompeticion, rival, dateKey, horaInicio, horaFin, horaQuedada, equipacion, lugarPartido, lugarQuedada, observaciones, descripcion, ubicacionMaps, onSave]);
 
   if (!form) return null;
 
@@ -648,16 +617,14 @@ function EventModal({
               })}
             </View>
 
-            <Text style={styles.modalLabel}>📅 Fecha (dd/mm/aaaa)</Text>
+            <Text style={styles.modalLabel}>📅 Fecha (YYYY-MM-DD)</Text>
             <TextInput
               style={styles.modalInput}
               value={dateKey}
-              onChangeText={(t) => setDateKey(formatDateInput(t))}
-              placeholder="dd/mm/aaaa"
+              onChangeText={setDateKey}
+              placeholder="2026-03-18"
               placeholderTextColor="#666"
               autoCapitalize="none"
-              keyboardType="numeric"
-              maxLength={10}
             />
 
             {tipoEvento === 'Partido' && (
@@ -692,7 +659,7 @@ function EventModal({
                   style={styles.modalInput}
                   value={lugarPartido}
                   onChangeText={setLugarPartido}
-                  placeholder="Pabellon / Direccion"
+                  placeholder="Pabellón / Dirección"
                   placeholderTextColor="#666"
                 />
                 <Text style={styles.modalLabel}>📌 Lugar de quedada (opcional)</Text>
@@ -716,7 +683,7 @@ function EventModal({
                 <TextInput
                   style={styles.modalInput}
                   value={equipacion}
-                  onChangeText={setEquipación}
+                  onChangeText={setEquipacion}
                   placeholder="Primera, segunda, petos..."
                   placeholderTextColor="#666"
                 />
@@ -733,27 +700,11 @@ function EventModal({
                 <TextInput
                   style={styles.modalInput}
                   value={ubicacionMaps}
-                  placeholder="Autogenerada por direccion"
+                  onChangeText={setUbicacionMaps}
+                  placeholder="https://maps.google.com/..."
                   placeholderTextColor="#666"
                   autoCapitalize="none"
-                  editable={false}
                 />
-                <Text style={styles.modalHint}>Se genera automáticamente desde "Lugar del partido".</Text>
-                <Text style={styles.modalLabel}>🗺 Exportar ubicación</Text>
-                <View style={styles.tipoRow}>
-                  <TouchableOpacity
-                    style={[styles.tipoBtn, exportarUbicacion && styles.tipoBtnActive]}
-                    onPress={() => setExportarUbicacion(true)}
-                  >
-                    <Text style={[styles.tipoBtnTxt, exportarUbicacion && styles.tipoBtnTxtActive]}>Sí</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.tipoBtn, !exportarUbicacion && styles.tipoBtnActive]}
-                    onPress={() => setExportarUbicacion(false)}
-                  >
-                    <Text style={[styles.tipoBtnTxt, !exportarUbicacion && styles.tipoBtnTxtActive]}>No</Text>
-                  </TouchableOpacity>
-                </View>
               </>
             )}
 
@@ -782,7 +733,7 @@ function EventModal({
                   style={[styles.modalInput, styles.modalInputMultiline]}
                   value={observaciones}
                   onChangeText={setObservaciones}
-                  placeholder="Plan de sesion, material..."
+                  placeholder="Plan de sesión, material..."
                   placeholderTextColor="#666"
                   multiline
                 />
@@ -813,7 +764,7 @@ function EventModal({
                 <TextInput
                   style={[styles.modalInput, styles.modalInputMultiline]}
                   value={descripcion}
-                  onChangeText={setDescripción}
+                  onChangeText={setDescripcion}
                   placeholder="Describe el evento..."
                   placeholderTextColor="#666"
                   multiline
@@ -975,7 +926,7 @@ function CalendarDay({
 function buildMonthGrid(year: number, month: number): (number | null)[][] {
   const first = new Date(year, month, 1);
   const last = new Date(year, month + 1, 0);
-  const startDow = (first.getDay() + 6) % 7;
+  const startDow = first.getDay();
   const daysInMonth = last.getDate();
   const rows: (number | null)[][] = [];
   let row: (number | null)[] = [];
@@ -1145,7 +1096,6 @@ export default function Calendario({
       observaciones: ev.observaciones || '',
       descripcion: ev.descripcion || '',
       ubicacionMaps: ev.ubicacionMaps || '',
-      exportarUbicacion: ev.exportarUbicacion !== false,
     });
     setEditingEventId(ev.id);
     setEventModalVisible(true);
@@ -1183,7 +1133,6 @@ export default function Calendario({
         observaciones: (form.observaciones || '').trim(),
         descripcion: tipoEvento === 'Otro' ? (form.descripcion || '').trim() : '',
         ubicacionMaps: tipoEvento === 'Partido' ? (form.ubicacionMaps || '').trim() : '',
-        exportarUbicacion: tipoEvento === 'Partido' ? (form.exportarUbicacion !== false) : false,
         ubicacion: tipoEvento === 'Partido' ? (form.lugarPartido || '').trim() : '',
         notas: '',
       };
@@ -1218,42 +1167,39 @@ export default function Calendario({
         const resultado = m.estado === 'jugado' && !m.isEvento ? `${m.golesFavor}-${m.golesContra}` : '—';
         let detalle = '';
         if (!m.isEvento) {
-          detalle = `Rival: ${m.rival} · 🕒 Hora: ${m.hora} · 📍 Lugar: ${m.lugar}`;
+          detalle = `🆚 Rival: ${m.rival} · 🕒 Hora: ${m.hora} · 📍 Lugar: ${m.lugar}`;
         } else if (tipo === 'Partido') {
           detalle = [
             `🏆 Competición: ${m.tipoCompeticion || '—'}`,
-            `Rival: ${m.rival || '—'}`,
+            `🆚 Rival: ${m.rival || '—'}`,
             `🕒 Hora partido: ${m.hora || '--'}`,
             `📍 Lugar partido: ${m.lugar || '—'}`,
             `📌 Lugar quedada: ${m.lugarQuedada || '—'}`,
             `🕘 Hora quedada: ${m.horaQuedada || '--'}`,
-            `Equipación: ${m.equipacion || '—'}`,
-            `Observaciones: ${m.observaciones || '—'}`,
+            `👕 Equipación: ${m.equipacion || '—'}`,
+            `📝 Observaciones: ${m.observaciones || '—'}`,
           ].join(' · ');
         } else if (tipo === 'Entrenamiento') {
           detalle = [
             `🕒 Hora inicio: ${m.hora || '--'}`,
             `⏱ Hora fin: ${m.horaFin || '--'}`,
-            `Observaciones: ${m.observaciones || '—'}`,
+            `📝 Observaciones: ${m.observaciones || '—'}`,
           ].join(' · ');
         } else {
           detalle = [
             `🕒 Hora inicio: ${m.hora || '--'}`,
             `⏱ Hora fin: ${m.horaFin || '--'}`,
-            `Descripción: ${m.descripcion || '—'}`,
+            `📝 Descripción: ${m.descripcion || '—'}`,
           ].join(' · ');
         }
-        const mapsUrl = m.isEvento && m.ubicacionMaps && m.exportarUbicacion !== false ? m.ubicacionMaps : '';
-        const mapsHtml = mapsUrl
-          ? `<a href="${escapeHtml(mapsUrl)}" target="_blank">Ver ubicación</a>`
-          : '—';
+        const maps = m.isEvento && m.ubicacionMaps ? m.ubicacionMaps : '—';
         return `<tr>
           <td>${escapeHtml(tipo)}</td>
           <td>${escapeHtml(formatDateLabel(parseDateKey(m.fecha)))}</td>
           <td>${escapeHtml(detalle)}</td>
           <td>${escapeHtml(m.estado || '—')}</td>
           <td>${escapeHtml(resultado)}</td>
-          <td>${mapsHtml}</td>
+          <td>${escapeHtml(maps)}</td>
         </tr>`;
       });
       const html = `
@@ -1285,9 +1231,9 @@ export default function Calendario({
       const monthLabel = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][(m || 1) - 1];
       const first = new Date(y, (m || 1) - 1, 1);
       const last = new Date(y, m || 1, 0);
-      const startDow = (first.getDay() + 6) % 7;
+      const startDow = first.getDay();
       const daysInMonth = last.getDate();
-      const weekDays = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+      const weekDays = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
       const prefix = `${y}-${String(m).padStart(2, '0')}-`;
       const monthMatches = matches.filter((mm) => parseDateKey(mm.fecha).startsWith(prefix));
       const matchesByDay: Record<number, MatchItem[]> = {};
@@ -1314,7 +1260,7 @@ export default function Calendario({
                   `👕 ${mm.equipacion || '—'}`,
                   `📝 ${mm.observaciones || '—'}`,
                 ];
-                if (mm.ubicacionMaps && mm.exportarUbicacion !== false) parts.push(`🗺 ${mm.ubicacionMaps}`);
+                if (mm.ubicacionMaps) parts.push(`🗺 ${mm.ubicacionMaps}`);
                 return parts.join(' | ');
               }
               if (tipo === 'Entrenamiento') {
@@ -1420,9 +1366,6 @@ export default function Calendario({
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
-          pinchGestureEnabled
-          minimumZoomScale={1}
-          maximumZoomScale={4}
           refreshControl={
             <RefreshControl refreshing={loading} onRefresh={syncFromSheets} tintColor="#00aaff" />
           }
@@ -1458,9 +1401,6 @@ export default function Calendario({
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
-          pinchGestureEnabled
-          minimumZoomScale={1}
-          maximumZoomScale={4}
           refreshControl={
             <RefreshControl refreshing={loading} onRefresh={syncFromSheets} tintColor="#00aaff" />
           }
@@ -1649,7 +1589,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   modalInputMultiline: { minHeight: 60, textAlignVertical: 'top' },
-  modalHint: { color: '#9EB3C2', fontSize: 10, marginTop: 4 },
   modalDateReadonly: { color: '#AAA', fontSize: 15, paddingVertical: 8 },
   modalButtons: { flexDirection: 'row', marginTop: 14, justifyContent: 'space-between' },
   modalBtnHalf: { flex: 1 },
@@ -1684,5 +1623,3 @@ const styles = StyleSheet.create({
   },
   exportBtnTxt: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
 });
-
-

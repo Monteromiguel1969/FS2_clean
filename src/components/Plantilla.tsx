@@ -5,7 +5,6 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { WebView } from 'react-native-webview';
 import { exportEvaluacionesDI, uploadPhotoToDrive } from '../services/googleSheetsService';
 import { normalizePlayerRatings, calculateValoracionIA, explainValoracionIA } from '../utils/playerRating';
 import { EVAL_DI_TARGET_PLAYERS, importEvaluacionesHoja2ToPlayers } from '../utils/evaluacionDIImport';
@@ -250,9 +249,6 @@ export default function Plantilla({
   ]);
   const [exportingListado, setExportingListado] = useState(false);
   const [importingDI, setImportingDI] = useState(false);
-  const [exportPreviewVisible, setExportPreviewVisible] = useState(false);
-  const [exportPreviewHtml, setExportPreviewHtml] = useState('');
-  const [exportPreviewTitle, setExportPreviewTitle] = useState('');
 
   const posiciones = ['Portero', 'Cierre', 'Ala', 'Pívot'];
   const opcionesLado = ['Derecha', 'Izquierda', 'Centro'];
@@ -634,6 +630,42 @@ export default function Plantilla({
     setEvalScore(score);
     Alert.alert('Guardado', 'Formulario personal guardado correctamente.');
   };
+  const removeEvaluacionForSelectedPlayer = (evalId: string, tipo: 'IA' | 'PERSONAL', fecha: string) => {
+    if (!iaSelectedPlayer) return;
+    const title = `Borrar evaluación ${tipo}`;
+    const msg = `¿Eliminar la evaluación del ${fecha || 'sin fecha'} para ${iaSelectedPlayer.name || iaSelectedPlayer.nominal || 'el jugador'}?`;
+    Alert.alert(title, msg, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Borrar',
+        style: 'destructive',
+        onPress: async () => {
+          const updatedPlayers = safePlayers.map((p: any) => {
+            if (String(p.id) !== String(iaSelectedPlayer.id)) return p;
+            const prev = Array.isArray(p.evaluacionesDI) ? p.evaluacionesDI : [];
+            const next = prev.filter((ev: any) => String(ev?.id || '') !== String(evalId));
+            return normalizePlayerRatings(
+              { ...p, evaluacionesDI: next },
+              p,
+              { partidos: safePartidos as any[], entrenos: safeEntrenos as any[] }
+            );
+          });
+          await setPlayers(updatedPlayers);
+          Alert.alert('Hecho', 'Evaluación eliminada para este jugador.');
+        },
+      },
+    ]);
+  };
+  const selectedPlayerEvaluaciones = Array.isArray(iaSelectedPlayer?.evaluacionesDI)
+    ? [...iaSelectedPlayer.evaluacionesDI]
+        .map((ev: any, idx: number) => ({
+          id: String(ev?.id || `${idx}`),
+          fecha: String(ev?.fecha || ''),
+          score: Number(ev?.score || 0),
+          tipo: ev?.personalForm && typeof ev.personalForm === 'object' ? 'PERSONAL' : 'IA',
+        }))
+        .reverse()
+    : [];
   const importarEvaluacionesDIHoja2 = async () => {
     if (importingDI) return;
     try {
@@ -745,14 +777,110 @@ export default function Plantilla({
         </html>
       `;
 
-      setExportPreviewTitle('PREVISUALIZACIÓN · LISTADO DE PLANTILLA');
-      setExportPreviewHtml(html);
-      setExportPreviewVisible(true);
+      const { uri } = await Print.printToFileAsync({ html });
+      const canShare = await Sharing.isAvailableAsync();
+      if (!canShare) {
+        Alert.alert('No disponible', 'El menú de compartir no está disponible en este dispositivo.');
+        return;
+      }
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/pdf',
+        UTI: 'com.adobe.pdf',
+        dialogTitle: 'Exportar listado de plantilla',
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert('Error', `No se pudo exportar el listado. ${msg}`);
     } finally {
       setExportingListado(false);
+    }
+  };
+
+  const buildFichaPonderacionIAHtml = () => {
+    if (!iaSelectedPlayer) return '';
+    const jugador = iaSelectedPlayer.name || iaSelectedPlayer.nominal || '-';
+    const fecha = evalFecha || todayDDMMYYYY();
+    const bloques = [
+      ['Control', control],
+      ['Pase', pase],
+      ['Lectura de juego', lecturaJuego],
+      ['Toma de decisión', tomaDecision],
+      ['Velocidad', velocidad],
+      ['Resistencia', resistencia],
+      ['Concentración', concentracion],
+      ['Competitividad', competitividad],
+    ]
+      .map(([k, v]) => `<tr><td>${escapeHtml(String(k))}</td><td>${escapeHtml(String(v))}</td></tr>`)
+      .join('');
+
+    return `
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            body { font-family: Arial, sans-serif; padding: 16px; color: #1a1a1a; }
+            h1 { font-size: 20px; margin-bottom: 8px; color: #012E57; }
+            h2 { font-size: 14px; color: #0E3A66; margin: 14px 0 8px; }
+            p { font-size: 12px; margin: 4px 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+            th, td { border: 1px solid #d8d8d8; padding: 8px; font-size: 12px; text-align: left; }
+            th { background: #012E57; color: #fff; }
+            .score { font-weight: 800; color: #0E3A66; font-size: 14px; }
+            .formula { font-size: 11px; color: #2C3E50; margin-top: 8px; }
+          </style>
+        </head>
+        <body>
+          <h1>Ficha de ponderación IA</h1>
+          <p><b>Jugador:</b> ${escapeHtml(jugador)}</p>
+          <p><b>Fecha:</b> ${escapeHtml(fecha)}</p>
+          <p><b>Valoración staff:</b> ${escapeHtml(String(valoracionStaff))}/5</p>
+          <h2>Bloques IA</h2>
+          <table>
+            <thead><tr><th>Parámetro</th><th>Valor</th></tr></thead>
+            <tbody>${bloques}</tbody>
+          </table>
+          <p class="score">Resultado IA: ${escapeHtml(String(iaPreview.score))}/5</p>
+          <p class="formula">Fórmula: ${escapeHtml(String(iaPreview.formula || '-'))}</p>
+        </body>
+      </html>
+    `;
+  };
+
+  const exportarFichaPonderacionIA = async () => {
+    if (!iaSelectedPlayer) {
+      Alert.alert('Sin jugador', 'Selecciona un jugador para exportar su ficha de ponderación IA.');
+      return;
+    }
+    try {
+      const html = buildFichaPonderacionIAHtml();
+      const { uri } = await Print.printToFileAsync({ html });
+      const canShare = await Sharing.isAvailableAsync();
+      if (!canShare) {
+        Alert.alert('No disponible', 'No se puede compartir en este dispositivo.');
+        return;
+      }
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/pdf',
+        UTI: 'com.adobe.pdf',
+        dialogTitle: 'Exportar ficha de ponderación IA',
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      Alert.alert('Error', `No se pudo exportar la ficha IA. ${msg}`);
+    }
+  };
+
+  const vistaPreviaFichaPonderacionIA = async () => {
+    if (!iaSelectedPlayer) {
+      Alert.alert('Sin jugador', 'Selecciona un jugador para previsualizar su ficha IA.');
+      return;
+    }
+    try {
+      const html = buildFichaPonderacionIAHtml();
+      await Print.printAsync({ html });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      Alert.alert('Error', `No se pudo abrir la vista previa. ${msg}`);
     }
   };
 
@@ -792,19 +920,7 @@ export default function Plantilla({
       </html>
     `;
     try {
-      setExportPreviewTitle('PREVISUALIZACIÓN · FORMULARIO PERSONAL');
-      setExportPreviewHtml(html);
-      setExportPreviewVisible(true);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      Alert.alert('Error', `No se pudo exportar. ${msg}`);
-    }
-  };
-
-  const compartirExportPreview = async () => {
-    if (!exportPreviewHtml) return;
-    try {
-      const { uri } = await Print.printToFileAsync({ html: exportPreviewHtml });
+      const { uri } = await Print.printToFileAsync({ html });
       const canShare = await Sharing.isAvailableAsync();
       if (!canShare) {
         Alert.alert('No disponible', 'No se puede compartir en este dispositivo.');
@@ -813,21 +929,11 @@ export default function Plantilla({
       await Sharing.shareAsync(uri, {
         mimeType: 'application/pdf',
         UTI: 'com.adobe.pdf',
-        dialogTitle: exportPreviewTitle || 'Exportar PDF',
+        dialogTitle: 'Exportar formulario personal',
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      Alert.alert('Error', `No se pudo compartir. ${msg}`);
-    }
-  };
-
-  const imprimirExportPreview = async () => {
-    if (!exportPreviewHtml) return;
-    try {
-      await Print.printAsync({ html: exportPreviewHtml });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      Alert.alert('Error', `No se pudo imprimir. ${msg}`);
+      Alert.alert('Error', `No se pudo exportar. ${msg}`);
     }
   };
 
@@ -1590,6 +1696,12 @@ export default function Plantilla({
               </Text>
               <Text style={styles.helperRatingTxt}>Fórmula IA: {iaPreview.formula}</Text>
               <Text style={styles.iaSummaryScore}>Resultado IA ahora: {iaPreview.score}/5</Text>
+              <TouchableOpacity style={styles.iaPrintBtn} onPress={vistaPreviaFichaPonderacionIA}>
+                <Text style={styles.iaPrintBtnTxt}>VISTA PREVIA (ZOOM CON PELLIZCO)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iaShareBtn} onPress={exportarFichaPonderacionIA}>
+                <Text style={styles.iaShareBtnTxt}>EXPORTAR / COMPARTIR FICHA IA</Text>
+              </TouchableOpacity>
             </ScrollView>
             <TouchableOpacity style={styles.iaCloseBtn} onPress={saveIAForSelectedPlayer}>
               <Text style={styles.iaCloseBtnTxt}>GUARDAR Y CERRAR</Text>
@@ -1683,6 +1795,28 @@ export default function Plantilla({
               <Text style={styles.helperRatingTxt}>
                 Historial formularios personales: {Array.isArray(iaSelectedPlayer?.evaluacionesDI) ? iaSelectedPlayer.evaluacionesDI.length : 0}
               </Text>
+              <View style={styles.evalHistoryWrap}>
+                <Text style={styles.evalHistoryTitle}>Historial de evaluaciones (jugador actual)</Text>
+                {selectedPlayerEvaluaciones.length ? (
+                  selectedPlayerEvaluaciones.map((ev) => (
+                    <View key={`${ev.id}-${ev.fecha}-${ev.tipo}`} style={styles.evalHistoryRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.evalHistoryRowTxt}>
+                          {ev.tipo} · {ev.fecha || 'Sin fecha'} · {Number.isFinite(ev.score) && ev.score > 0 ? `${ev.score}/5` : '-'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.evalDeleteBtn}
+                        onPress={() => removeEvaluacionForSelectedPlayer(ev.id, ev.tipo as 'IA' | 'PERSONAL', ev.fecha)}
+                      >
+                        <Text style={styles.evalDeleteBtnTxt}>BORRAR</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.evalHistoryEmpty}>Sin evaluaciones guardadas para este jugador.</Text>
+                )}
+              </View>
             </ScrollView>
             <TouchableOpacity style={styles.iaCloseBtn} onPress={() => setPersonalFormVisible(false)}>
               <Text style={styles.iaCloseBtnTxt}>CERRAR</Text>
@@ -1781,39 +1915,6 @@ export default function Plantilla({
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.listadoCloseBtn} onPress={() => setListadoModalVisible(false)}>
-                <Text style={styles.listadoCloseTxt}>CERRAR</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={exportPreviewVisible} transparent animationType="slide" onRequestClose={() => setExportPreviewVisible(false)}>
-        <View style={styles.iaModalOverlay}>
-          <View style={styles.exportPreviewCard}>
-            <Text style={styles.iaModalTitle}>{exportPreviewTitle || 'PREVISUALIZACIÓN'}</Text>
-            <View style={styles.exportPreviewWebWrap}>
-              <WebView
-                originWhitelist={['*']}
-                source={{
-                  html: exportPreviewHtml || '<html><body style="font-family: Arial; padding: 12px;">Sin contenido para previsualizar.</body></html>',
-                }}
-                setBuiltInZoomControls
-                setDisplayZoomControls={false}
-                scalesPageToFit
-                showsVerticalScrollIndicator
-                showsHorizontalScrollIndicator
-                style={styles.exportPreviewWeb}
-              />
-            </View>
-            <View style={styles.listadoActions}>
-              <TouchableOpacity style={styles.listadoExportBtn} onPress={compartirExportPreview}>
-                <Text style={styles.listadoExportTxt}>EXPORTAR / COMPARTIR</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.listadoCloseBtn, { backgroundColor: '#E8F1FB' }]} onPress={imprimirExportPreview}>
-                <Text style={styles.listadoCloseTxt}>IMPRIMIR</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.listadoCloseBtn} onPress={() => setExportPreviewVisible(false)}>
                 <Text style={styles.listadoCloseTxt}>CERRAR</Text>
               </TouchableOpacity>
             </View>
@@ -1950,6 +2051,13 @@ const styles = StyleSheet.create({
   iaPrintBtnTxt: { color: '#FFF', fontWeight: '800', fontSize: 11 },
   iaShareBtn: { backgroundColor: '#1565C0', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginBottom: 8 },
   iaShareBtnTxt: { color: '#FFF', fontWeight: '800', fontSize: 11 },
+  evalHistoryWrap: { marginTop: 8, marginBottom: 8, backgroundColor: '#EEF4FA', borderRadius: 10, padding: 10 },
+  evalHistoryTitle: { color: '#0F3B63', fontSize: 11, fontWeight: '800', marginBottom: 8 },
+  evalHistoryRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  evalHistoryRowTxt: { color: '#1A2A3A', fontSize: 10, fontWeight: '600' },
+  evalHistoryEmpty: { color: '#4A5A6A', fontSize: 10, fontStyle: 'italic' },
+  evalDeleteBtn: { backgroundColor: '#B71C1C', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6 },
+  evalDeleteBtnTxt: { color: '#FFF', fontSize: 9, fontWeight: '800' },
   iaBlocksWrap: { marginBottom: 10 },
   iaBlockCard: { backgroundColor: '#F3F7FC', borderWidth: 1, borderColor: '#D5E3F2', borderRadius: 8, padding: 8, marginBottom: 6 },
   iaBlockCardTitle: { color: '#123A5B', fontSize: 11, fontWeight: '800' },
@@ -2025,21 +2133,4 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   listadoCloseTxt: { color: '#455A64', fontWeight: '800' },
-  exportPreviewCard: {
-    width: '94%',
-    maxHeight: '92%',
-    backgroundColor: '#FFF',
-    borderRadius: 14,
-    padding: 12,
-  },
-  exportPreviewWebWrap: {
-    flex: 1,
-    minHeight: 420,
-    borderWidth: 1,
-    borderColor: '#D8E3EF',
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginBottom: 10,
-  },
-  exportPreviewWeb: { flex: 1, backgroundColor: '#FFFFFF' },
 });

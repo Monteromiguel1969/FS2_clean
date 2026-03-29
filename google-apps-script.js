@@ -31,7 +31,6 @@ const SHEET_PLANTILLA = 'Plantilla';
 const SHEET_PARTIDOS = 'Partidos';
 const SHEET_ENTRENAMIENTOS = 'Entrenamientos';
 const SHEET_EVALUACION_DI = 'Evaluacion_DI';
-const SHEET_EVALUACION_DI_MATRIZ = 'Evaluacion_DI_Matriz';
 const SHEET_EVALUACION_DI_IA_MATRIZ = 'Evaluacion_DI_IA_Matriz';
 const SHEET_EVALUACION_DI_PERSONAL_MATRIZ = 'Evaluacion_DI_Personal_Matriz';
 const SHEET_HISTORICO_EVALUACIONES = 'Historico_Evaluaciones';
@@ -107,9 +106,6 @@ function doPost(e) {
       case 'exportEvaluacionesDI':
         response = handleExportEvaluacionesDI(requestData.data, spreadsheetId);
         break;
-      case 'exportEvaluacionesDIMatriz':
-        response = handleExportEvaluacionesDIMatriz(requestData.data, spreadsheetId);
-        break;
       case 'exportEvaluacionesDIViews':
         response = handleExportEvaluacionesDIViews(requestData, spreadsheetId);
         break;
@@ -117,7 +113,7 @@ function doPost(e) {
         response = handleImportEvaluacionesDI(spreadsheetId);
         break;
       default:
-        response = { success: false, message: 'Acción no reconocida' };
+        response = { success: false, message: 'Accion no reconocida' };
     }
 
     return ContentService.createTextOutput(JSON.stringify(response)).setMimeType(ContentService.MimeType.JSON);
@@ -196,11 +192,7 @@ function getOrCreateSheet(sheetName, optionalSpreadsheetId) {
         ],
       ]);
       sheet.getRange(1, 1, 1, 13).setFontWeight('bold');
-    } else if (
-      sheetName === SHEET_EVALUACION_DI_MATRIZ ||
-      sheetName === SHEET_EVALUACION_DI_IA_MATRIZ ||
-      sheetName === SHEET_EVALUACION_DI_PERSONAL_MATRIZ
-    ) {
+    } else if (sheetName === SHEET_EVALUACION_DI_IA_MATRIZ || sheetName === SHEET_EVALUACION_DI_PERSONAL_MATRIZ) {
       sheet.getRange(1, 1, 1, 2).setValues([['Pregunta', 'Resultado valoracion']]);
       sheet.getRange(1, 1, 1, 2).setFontWeight('bold');
     } else if (sheetName === SHEET_HISTORICO_EVALUACIONES) {
@@ -275,145 +267,6 @@ function handleExportEvaluacionesDI(data, spreadsheetId) {
   }
 }
 
-function parseEvalDateToMs(raw) {
-  var s = String(raw || '').trim();
-  if (!s) return 0;
-  var m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m) {
-    var dd = Number(m[1]);
-    var mm = Number(m[2]);
-    var yyyy = Number(m[3]);
-    if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12 && yyyy >= 1900) {
-      return new Date(yyyy, mm - 1, dd).getTime();
-    }
-  }
-  var parsed = new Date(s).getTime();
-  return isNaN(parsed) ? 0 : parsed;
-}
-
-function handleExportEvaluacionesDIMatriz(data, spreadsheetId) {
-  try {
-    var sheet = getOrCreateSheet(SHEET_EVALUACION_DI_MATRIZ, spreadsheetId);
-    var input = Array.isArray(data) ? data : [];
-    var rows = input.filter(function (r) {
-      return String((r || {}).pregunta || '').trim() !== '';
-    });
-
-    // Siempre reescribimos la hoja para reflejar el estado actual completo.
-    sheet.clearContents();
-    if (!rows.length) {
-      sheet.getRange(1, 1, 1, 1).setValues([['Pregunta']]);
-      sheet.getRange(1, 1, 1, 1).setFontWeight('bold');
-      return { success: true, message: 'Sin preguntas D.I. para exportar a matriz', rows: 0, players: 0 };
-    }
-
-    var playersOrder = [];
-    var playersSeen = {};
-    var questionsOrder = [];
-    var questionsSeen = {};
-    var latestByQuestionPlayer = {};
-
-    for (var i = 0; i < rows.length; i++) {
-      var r = rows[i] || {};
-      var pregunta = String(r.pregunta || '').trim();
-      if (!pregunta) continue;
-
-      var jugadorId = String(r.jugador_id || '').trim();
-      var jugadorNombre = String(r.jugador_nombre || '').trim();
-      var playerKey = jugadorId || jugadorNombre;
-      if (!playerKey) continue;
-      if (!playersSeen[playerKey]) {
-        playersSeen[playerKey] = true;
-        playersOrder.push({
-          key: playerKey,
-          nombre: jugadorNombre || jugadorId || ('Jugador ' + String(playersOrder.length + 1)),
-        });
-      }
-      if (!questionsSeen[pregunta]) {
-        questionsSeen[pregunta] = true;
-        questionsOrder.push(pregunta);
-      }
-
-      var cellKey = pregunta + '\u0001' + playerKey;
-      var resp = String(r.respuesta || '').trim();
-      var ts = parseEvalDateToMs(r.fecha_eval);
-      var prev = latestByQuestionPlayer[cellKey];
-      if (!prev || ts > prev.ts || (ts === prev.ts && i > prev.idx)) {
-        latestByQuestionPlayer[cellKey] = { respuesta: resp, ts: ts, idx: i };
-      }
-    }
-
-    var matrix = [];
-    var header = ['Pregunta'];
-    for (var h = 0; h < playersOrder.length; h++) {
-      header.push(playersOrder[h].nombre);
-    }
-    matrix.push(header);
-
-    for (var q = 0; q < questionsOrder.length; q++) {
-      var preguntaText = questionsOrder[q];
-      var row = [preguntaText];
-      for (var p = 0; p < playersOrder.length; p++) {
-        var key = preguntaText + '\u0001' + playersOrder[p].key;
-        row.push((latestByQuestionPlayer[key] && latestByQuestionPlayer[key].respuesta) || '');
-      }
-      matrix.push(row);
-    }
-
-    sheet.getRange(1, 1, matrix.length, matrix[0].length).setValues(matrix);
-    sheet.getRange(1, 1, 1, matrix[0].length).setFontWeight('bold');
-    sheet.setFrozenRows(1);
-    sheet.setFrozenColumns(1);
-
-    return {
-      success: true,
-      message: 'Matriz D.I. exportada correctamente',
-      rows: questionsOrder.length,
-      players: playersOrder.length,
-    };
-  } catch (error) {
-    return { success: false, message: 'Error al exportar Evaluacion_DI_Matriz: ' + error.toString() };
-  }
-}
-
-function writeMatrixSheet(sheetName, matrix, spreadsheetId) {
-  var sheet = getOrCreateSheet(sheetName, spreadsheetId);
-  var safe = Array.isArray(matrix) ? matrix : [];
-  sheet.clearContents();
-  if (!safe.length || !Array.isArray(safe[0]) || safe[0].length === 0) {
-    sheet.getRange(1, 1, 1, 1).setValues([['Sin datos']]);
-    sheet.getRange(1, 1, 1, 1).setFontWeight('bold');
-    return { rows: 0, cols: 1 };
-  }
-  sheet.getRange(1, 1, safe.length, safe[0].length).setValues(safe);
-  sheet.getRange(1, 1, 1, safe[0].length).setFontWeight('bold');
-  sheet.setFrozenRows(1);
-  if (safe[0].length > 1) sheet.setFrozenColumns(1);
-  return { rows: safe.length - 1, cols: safe[0].length };
-}
-
-function handleExportEvaluacionesDIViews(requestData, spreadsheetId) {
-  try {
-    var iaMatrix = requestData.iaMatrix || [];
-    var personalMatrix = requestData.personalMatrix || [];
-    var historicoMatrix = requestData.historicoMatrix || [];
-
-    var iaInfo = writeMatrixSheet(SHEET_EVALUACION_DI_IA_MATRIZ, iaMatrix, spreadsheetId);
-    var personalInfo = writeMatrixSheet(SHEET_EVALUACION_DI_PERSONAL_MATRIZ, personalMatrix, spreadsheetId);
-    writeMatrixSheet(SHEET_HISTORICO_EVALUACIONES, historicoMatrix, spreadsheetId);
-
-    return {
-      success: true,
-      message: 'Vistas D.I. exportadas (IA, Personal e Historico).',
-      iaRows: iaInfo.rows,
-      personalRows: personalInfo.rows,
-      players: Math.max(0, iaInfo.cols - 2),
-    };
-  } catch (error) {
-    return { success: false, message: 'Error al exportar vistas D.I.: ' + error.toString() };
-  }
-}
-
 function handleImportEvaluacionesDI(spreadsheetId) {
   try {
     var sheet = getOrCreateSheet(SHEET_EVALUACION_DI, spreadsheetId);
@@ -439,6 +292,56 @@ function handleImportEvaluacionesDI(spreadsheetId) {
     return { success: true, data: rows, message: 'Evaluaciones importadas' };
   } catch (error) {
     return { success: false, message: 'Error al importar Evaluacion_DI: ' + error.toString() };
+  }
+}
+
+function writeMatrixSheet(sheetName, matrix, spreadsheetId) {
+  var sheet = getOrCreateSheet(sheetName, spreadsheetId);
+  var safe = Array.isArray(matrix) ? matrix : [];
+  sheet.clearContents();
+  if (!safe.length || !Array.isArray(safe[0]) || safe[0].length === 0) {
+    sheet.getRange(1, 1, 1, 1).setValues([['Sin datos']]);
+    sheet.getRange(1, 1, 1, 1).setFontWeight('bold');
+    return { rows: 0, cols: 1 };
+  }
+  sheet.getRange(1, 1, safe.length, safe[0].length).setValues(safe);
+  sheet.getRange(1, 1, 1, safe[0].length).setFontWeight('bold');
+  sheet.setFrozenRows(1);
+  if (safe[0].length > 1) sheet.setFrozenColumns(1);
+  return { rows: Math.max(0, safe.length - 1), cols: safe[0].length };
+}
+
+function handleExportEvaluacionesDIViews(requestData, spreadsheetId) {
+  try {
+    var updateIA = requestData.updateIA !== false;
+    var updatePersonal = requestData.updatePersonal !== false;
+    var updateHistorico = requestData.updateHistorico !== false;
+    var iaInfo = { rows: 0, cols: 0 };
+    var personalInfo = { rows: 0, cols: 0 };
+
+    if (updateIA) {
+      iaInfo = writeMatrixSheet(SHEET_EVALUACION_DI_IA_MATRIZ, requestData.iaMatrix || [], spreadsheetId);
+    }
+    if (updatePersonal) {
+      personalInfo = writeMatrixSheet(
+        SHEET_EVALUACION_DI_PERSONAL_MATRIZ,
+        requestData.personalMatrix || [],
+        spreadsheetId
+      );
+    }
+    if (updateHistorico) {
+      writeMatrixSheet(SHEET_HISTORICO_EVALUACIONES, requestData.historicoMatrix || [], spreadsheetId);
+    }
+
+    return {
+      success: true,
+      message: 'Vistas D.I. exportadas.',
+      iaRows: iaInfo.rows,
+      personalRows: personalInfo.rows,
+      players: Math.max(0, iaInfo.cols - 2),
+    };
+  } catch (error) {
+    return { success: false, message: 'Error al exportar vistas D.I.: ' + error.toString() };
   }
 }
 

@@ -22,7 +22,7 @@ export function formatDateGlobal(value: string | Date | null | undefined): strin
 }
 
 /**
- * Formato corto para listados: dd/mm/aa (año en 2 dígitos).
+ * Formato de exportación: dd/mm/aaaa (año en 4 dígitos).
  */
 export function formatDateExport(value: string | Date | null | undefined): string {
   if (value == null || value === '') return '';
@@ -30,7 +30,7 @@ export function formatDateExport(value: string | Date | null | undefined): strin
   if (!d || isNaN(d.getTime())) return typeof value === 'string' ? value : '';
   const day = d.getDate().toString().padStart(2, '0');
   const month = (d.getMonth() + 1).toString().padStart(2, '0');
-  const year = d.getFullYear().toString().slice(-2);
+  const year = d.getFullYear().toString();
   return `${day}/${month}/${year}`;
 }
 

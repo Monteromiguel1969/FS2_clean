@@ -42,6 +42,8 @@ export default function Ayuda({ onBack }: { onBack: () => void }) {
         <SubSection title="2.2 Valoraciones" />
         <Paragraph>• Valoracion Staff: la introduces manualmente (1-5) segun observacion del cuerpo tecnico.</Paragraph>
         <Paragraph>• Valoracion IA: se calcula automaticamente al guardar la ficha a partir de la informacion disponible.</Paragraph>
+        <Paragraph>• Puedes borrar evaluaciones concretas por jugador (IA o personal) desde su historial, sin borrar toda la plantilla.</Paragraph>
+        <Paragraph>• La Ficha de Ponderacion IA dispone de vista previa ampliable con pellizco y opcion de exportar/compartir en PDF.</Paragraph>
         <SubSection title="2.3 Listado personalizado" />
         <Paragraph>• Boton de listado: seleccionas campos, ves vista previa y exportas en PDF por menu de compartir.</Paragraph>
         <Paragraph>• Util para convocatorias, control de equipaciones o informes de temporada.</Paragraph>
@@ -81,6 +83,8 @@ export default function Ayuda({ onBack }: { onBack: () => void }) {
         <SubSection title="6.1 Funcionamiento" />
         <Paragraph>• Control por periodos con tiempos de juego, eventos, goles y seguimiento del partido en vivo.</Paragraph>
         <Paragraph>• Permite reflejar dinamica real para analisis posterior.</Paragraph>
+        <Paragraph>• Hay dos conteos independientes: tiempo del partido y tiempo de cambios.</Paragraph>
+        <Paragraph>• Puedes activar alarma periodica (pitido + vibracion) cada X minutos (1 a 15).</Paragraph>
         <SubSection title="6.2 Integracion" />
         <Paragraph>• Los datos del cronometro se importan en Partidos y alimentan estadisticas.</Paragraph>
         <Paragraph>• Esto reduce errores manuales y mejora la trazabilidad de cada encuentro.</Paragraph>
@@ -92,25 +96,15 @@ export default function Ayuda({ onBack }: { onBack: () => void }) {
         <SubSection title="7.2 Herramientas de dibujo" />
         <Paragraph>• Preparacion de jugadas con trazos y escenarios tacticos para explicacion al equipo.</Paragraph>
         <Paragraph>• El scroll y los paneles estan adaptados para movil y zona de gestos.</Paragraph>
+        <Paragraph>• La pizarra se mantiene fija, pero las fichas de jugadores se ajustan al giro del dispositivo para facilitar lectura.</Paragraph>
+        <Paragraph>• En banquillo, el nombre aparece debajo de cada jugador; en pista se prioriza la vista limpia del campo.</Paragraph>
 
-        <Section title="8) Stats (analisis completo)" />
-        <SubSection title="8.1 Pestanas y lectura rapida" />
-        <Paragraph>• ENTRENOS: asistencia por sesion, con vista cronologica y resumen de objetivos tacticos mas repetidos.</Paragraph>
-        <Paragraph>• PARTIDOS: asistencia de convocatoria, capitanias, goles y minutos por encuentro.</Paragraph>
-        <Paragraph>• RESUMEN: tabla global por persona con Ent(N), Ent(%), Par(N), Par(%), Dedic., Goles, Cap y Min.</Paragraph>
-        <Paragraph>• DI: nueva pestana para consultar Valoracion IA, D.I. global, Evaluacion personal y fecha de ultima evaluacion personal.</Paragraph>
-        <Paragraph>• FINAL: bloques de rendimiento del equipo, local/visitante, pichichis y rendimiento individual por competicion.</Paragraph>
-        <SubSection title="8.2 Dedicacion global (nueva columna)" />
-        <Paragraph>• Formula: (Ent asistidos + Par asistidos) / (Total entrenos + Total partidos) * 100.</Paragraph>
-        <Paragraph>• Permite medir compromiso total combinado, no solo por entrenos o partidos por separado.</Paragraph>
-        <SubSection title="8.3 Exportacion PDF desde Stats" />
-        <Paragraph>• El boton EXPORTAR genera el PDF de la pestana que tengas activa en ese momento.</Paragraph>
-        <Paragraph>• En RESUMEN se incluye la columna Dedicacion global.</Paragraph>
-        <Paragraph>• En DI se exporta la tabla de valoraciones D.I. y evaluacion personal.</Paragraph>
-        <Paragraph>• Recomendacion: revisa primero en pantalla y luego exporta para evitar versiones duplicadas.</Paragraph>
-        <SubSection title="8.4 Adaptacion visual automatica" />
-        <Paragraph>• Las tablas ajustan tipografia, paddings y etiquetas segun el ancho real del dispositivo.</Paragraph>
-        <Paragraph>• En moviles muy estrechos se acortan cabeceras para mantener legibilidad sin solapes.</Paragraph>
+        <Section title="8) Stats" />
+        <SubSection title="8.1 Que muestra" />
+        <Paragraph>• Estadisticas por entrenamientos, partidos y resumen global del rendimiento.</Paragraph>
+        <Paragraph>• Te ayuda a detectar regularidad, aportacion ofensiva y disponibilidad.</Paragraph>
+        <SubSection title="8.2 Exportacion" />
+        <Paragraph>• Exporta lo visible en la pestana activa para compartir con staff o direccion deportiva.</Paragraph>
 
         <Section title="9) Calendario" />
         <SubSection title="9.1 Tipos de evento" />
@@ -119,47 +113,31 @@ export default function Ayuda({ onBack }: { onBack: () => void }) {
         <SubSection title="9.2 Ubicacion y exportacion" />
         <Paragraph>• En Partido puedes generar ubicacion de Google Maps automaticamente desde el lugar.</Paragraph>
         <Paragraph>• Al exportar, decides si incluir o no la ubicacion.</Paragraph>
+        <Paragraph>• En el menu principal veras un resumen automatico de eventos de los proximos 7 dias (incluyendo hoy).</Paragraph>
 
-        <Section title="10) Gestion de datos (Google Sheets / Drive)" />
-        <SubSection title="10.1 Conexion y formatos aceptados" />
-        <Paragraph>• Puedes pegar ID del spreadsheet o URL completa del documento.</Paragraph>
-        <Paragraph>• La app sincroniza Plantilla, Entrenamientos y Partidos, y exporta vistas especiales de evaluaciones.</Paragraph>
-        <SubSection title="10.2 Exportaciones de Evaluaciones D.I. (nuevas vistas)" />
-        <Paragraph>• Se mantiene la exportacion tradicional en formato largo (sin romper flujos anteriores).</Paragraph>
-        <Paragraph>• Ademas se generan automaticamente estas hojas nuevas si no existen:</Paragraph>
-        <Paragraph>• 1) Evaluacion_DI_IA_Matriz: items/bloques IA por filas, nominales por columnas y resultados por fila.</Paragraph>
-        <Paragraph>• 2) Evaluacion_DI_Personal_Matriz: preguntas del formulario personal por filas, nominales por columnas y resultados por fila.</Paragraph>
-        <Paragraph>• 3) Historico_Evaluaciones: fechas por filas y nominales por columnas con evolucion de evaluaciones globales.</Paragraph>
-        <Paragraph>• En caso de varias evaluaciones del mismo dia para un jugador, prevalece la ultima registrada.</Paragraph>
-        <SubSection title="10.3 Consejos de sincronizacion segura" />
-        <Paragraph>• Antes de importar, exporta una copia de seguridad para poder volver atras.</Paragraph>
-        <Paragraph>• Si detectas diferencias, verifica nominales, fechas y que el spreadsheet/script sean los correctos.</Paragraph>
-        <Paragraph>• Si una hoja no aparece, repite una exportacion completa de evaluaciones; la creacion es automatica.</Paragraph>
-        <SubSection title="10.4 Drive y documentos" />
-        <Paragraph>• Las actas e informes pueden compartirse o imprimirse desde la vista previa.</Paragraph>
-        <Paragraph>• Si vinculas Drive, puedes recuperar archivos incluso al cambiar de dispositivo.</Paragraph>
+        <Section title="10) Gestion de datos (Google Sheets)" />
+        <SubSection title="10.1 Sincronizacion" />
+        <Paragraph>• Importa/exporta Plantilla, Partidos y Entrenamientos.</Paragraph>
+        <Paragraph>• Acepta tanto ID de spreadsheet como URL completa del documento.</Paragraph>
+        <Paragraph>• La app valida respuestas del script para evitar errores de parseo cuando Google devuelve HTML por URL/deploy incorrecto.</Paragraph>
+        <SubSection title="10.2 Importante antes de importar" />
+        <Paragraph>• Importar reemplaza datos locales por los datos del origen seleccionado.</Paragraph>
+        <Paragraph>• Recomendado exportar copia local antes de cada importacion.</Paragraph>
+        <Paragraph>• Las fechas se normalizan a formato dd/mm/aaaa al importar, mostrar y exportar.</Paragraph>
+        <Paragraph>• Los enlaces de actas se preservan en actualizaciones y sincronizaciones para no perder vinculaciones de Drive.</Paragraph>
+        <SubSection title="10.3 Limpieza selectiva de evaluaciones" />
+        <Paragraph>• Desde Gestion de datos puedes reiniciar formularios de evaluacion en local (IA, personal o ambos) cuando quieras empezar de cero.</Paragraph>
 
-        <Section title="11) Previsualizaciones, zoom y rotacion" />
-        <SubSection title="11.1 Zoom con los dedos (pinch)" />
-        <Paragraph>• Las previsualizaciones de exportaciones (informes, listados y formularios) permiten zoom con los dedos.</Paragraph>
-        <Paragraph>• Esto facilita validar detalle fino antes de compartir o imprimir.</Paragraph>
-        <SubSection title="11.2 Rotacion global de pantalla" />
-        <Paragraph>• La app permite girar entre vertical y horizontal segun orientacion del dispositivo.</Paragraph>
-        <Paragraph>• En horizontal tendras mas anchura para tablas y revisiones de informes largos.</Paragraph>
-        <SubSection title="11.3 Recomendacion practica" />
-        <Paragraph>• Para revisar tablas anchas (Stats o matrices), usa horizontal; para carga de datos rapida, vertical.</Paragraph>
-
-        <Section title="12) Copias de seguridad y actualizaciones" />
-        <SubSection title="12.1 Buenas practicas" />
+        <Section title="11) Copias de seguridad y actualizaciones" />
+        <SubSection title="11.1 Buenas practicas" />
         <Paragraph>• Exporta datos antes de instalar una nueva APK.</Paragraph>
         <Paragraph>• Mantener package/app id y versionCode en orden evita conflictos y perdida de datos al actualizar.</Paragraph>
         <Paragraph>• Guarda la APK final en carpeta de releases para trazabilidad de versiones.</Paragraph>
-        <SubSection title="12.2 Si aparece un problema" />
+        <SubSection title="11.2 Si aparece un problema" />
         <Paragraph>• Verifica primero que instalaste la APK correcta de la version esperada.</Paragraph>
-        <Paragraph>• Si algo no cuadra, revisa Gestion de datos, nominales, fechas y configuracion de spreadsheet/script.</Paragraph>
-        <Paragraph>• Ante duda, exporta backup, limpia inconsistencias y vuelve a importar de forma controlada.</Paragraph>
+        <Paragraph>• Si algo no cuadra, revisar Gestion de datos y la configuracion de spreadsheet/script.</Paragraph>
 
-        <Section title="13) Novedades por version" />
+        <Section title="12) Novedades por version" />
         {HELP_CHANGELOG.length === 0 ? (
           <View style={styles.versionCard}>
             <Text style={styles.paragraph}>• Historial reiniciado. En proximas versiones apareceran aqui los cambios automaticamente.</Text>
@@ -179,13 +157,6 @@ export default function Ayuda({ onBack }: { onBack: () => void }) {
           <FontAwesome name="info-circle" size={14} color="#1565C0" />
           <Text style={styles.footerTxt}> Este bloque se actualiza automaticamente en cada nueva version.</Text>
         </View>
-
-        <Section title="14) Guia rapida de operacion diaria (resumen)" />
-        <Paragraph>• 1) Antes de actividad: revisar Plantilla (disponibilidad, roles y datos basicos).</Paragraph>
-        <Paragraph>• 2) Entreno/partido: registrar asistencia y eventos (cronometro en vivo si aplica).</Paragraph>
-        <Paragraph>• 3) Post actividad: importar cronometro en Partidos y validar acta/informe.</Paragraph>
-        <Paragraph>• 4) Seguimiento: revisar Stats (RESUMEN + DI) y detectar tendencias.</Paragraph>
-        <Paragraph>• 5) Cierre semanal: exportar a Google Sheets/Drive y guardar backup local.</Paragraph>
       </ScrollView>
     </SafeAreaView>
   );

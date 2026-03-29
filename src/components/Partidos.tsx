@@ -9,7 +9,6 @@ import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
 import * as FileSystem from 'expo-file-system/legacy';
 import { FontAwesome } from '@expo/vector-icons';
-import { WebView } from 'react-native-webview';
 
 // Importaciones de servicios
 import { uploadActaToDrive, listActasFromDrive } from '../services/googleSheetsService';
@@ -589,17 +588,13 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
       .page-break { page-break-after: always; }
     </style>
   `;
-  const reportHtmlDocument = useMemo(() => {
-    if (!reportContent) return '';
-    return `<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">${reportHtmlStyle}</head><body>${reportContent}</body></html>`;
-  }, [reportContent]);
 
   const handleExportReportToDrive = async () => {
     if (!reportContent) return;
     if (sharingRef.current) return;
     try {
       sharingRef.current = true;
-      const html = reportHtmlDocument || `<html><head><meta charset="UTF-8">${reportHtmlStyle}</head><body>${reportContent}</body></html>`;
+      const html = `<html><head><meta charset="UTF-8">${reportHtmlStyle}</head><body>${reportContent}</body></html>`;
       const { uri } = await Print.printToFileAsync({ html });
       await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Exportar informe (guardar en Drive, etc.)' });
     } catch (error) {
@@ -614,7 +609,7 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
     if (sharingRef.current) return;
     try {
       sharingRef.current = true;
-      const html = reportHtmlDocument || `<html><head><meta charset="UTF-8">${reportHtmlStyle}</head><body>${reportContent}</body></html>`;
+      const html = `<html><head><meta charset="UTF-8">${reportHtmlStyle}</head><body>${reportContent}</body></html>`;
       const { uri } = await Print.printToFileAsync({ html });
       await Sharing.shareAsync(uri, { mimeType: 'application/pdf' });
     } catch (error) {
@@ -644,23 +639,6 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
     <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
       <Text style={styles.title}>ACTA DE PARTIDO</Text>
-
-      {editItem && (
-        <View style={styles.editModeBanner}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.editModeTitle}>MODO EDICION ACTIVO</Text>
-            <Text style={styles.editModeSub} numberOfLines={1}>
-              Partido: {editItem?.rival || 'Sin rival'} ({formatDateExport(parseToDate(editItem?.fecha)) || editItem?.fecha || 'sin fecha'})
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.editModeExitBtn}
-            onPress={() => onClearEdit?.()}
-          >
-            <Text style={styles.editModeExitTxt}>NUEVO</Text>
-          </TouchableOpacity>
-        </View>
-      )}
 
       {/* Botón para abrir histórico */}
       <TouchableOpacity
@@ -921,28 +899,13 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
         <View style={styles.modalOverlay}>
           <View style={styles.reportModalContent}>
             <Text style={styles.modalTitle}>INFORME DE PARTIDO</Text>
-            {reportHtmlDocument ? (
-              <View style={styles.reportWebViewWrap}>
-                <WebView
-                  originWhitelist={['*']}
-                  source={{ html: reportHtmlDocument }}
-                  setBuiltInZoomControls
-                  setDisplayZoomControls={false}
-                  scalesPageToFit
-                  showsVerticalScrollIndicator
-                  showsHorizontalScrollIndicator
-                  style={styles.reportWebView}
-                />
-              </View>
-            ) : (
-              <ScrollView 
-                style={styles.reportScrollView}
-                contentContainerStyle={styles.reportScrollContent}
-                showsVerticalScrollIndicator={true}
-              >
-                <Text style={styles.reportText}>{reportPreview || 'Cargando informe...'}</Text>
-              </ScrollView>
-            )}
+            <ScrollView 
+              style={styles.reportScrollView}
+              contentContainerStyle={styles.reportScrollContent}
+              showsVerticalScrollIndicator={true}
+            >
+              <Text style={styles.reportText}>{reportPreview || 'Cargando informe...'}</Text>
+            </ScrollView>
             <View style={styles.reportActions}>
               <TouchableOpacity 
                 style={[styles.reportActionBtn, styles.printBtn]} 
@@ -979,11 +942,6 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#001A33', padding: 15 },
   title: { color: '#FFF', fontSize: 18, fontWeight: 'bold', textAlign: 'center', marginTop: 30, marginBottom: 15 },
-  editModeBanner: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#0D2137', borderWidth: 1, borderColor: '#00D4FF', borderRadius: 10, padding: 10, marginBottom: 12 },
-  editModeTitle: { color: '#00D4FF', fontSize: 11, fontWeight: 'bold' },
-  editModeSub: { color: '#B0BEC5', fontSize: 10, marginTop: 2 },
-  editModeExitBtn: { backgroundColor: '#2E7D32', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  editModeExitTxt: { color: '#FFF', fontSize: 10, fontWeight: 'bold' },
   card: { backgroundColor: '#012E57', padding: 15, borderRadius: 12, marginBottom: 15 },
   input: { backgroundColor: '#001A33', color: '#FFF', padding: 10, borderRadius: 8, marginBottom: 8, fontSize: 13 },
   row: { flexDirection: 'row', gap: 6, alignItems: 'center' },
@@ -1030,8 +988,6 @@ const styles = StyleSheet.create({
   reportBtn: { backgroundColor: '#FF6D00', padding: 12, borderRadius: 8, alignItems: 'center', marginBottom: 15 },
   reportBtnTxt: { color: '#FFF', fontWeight: 'bold', fontSize: 11 },
   reportModalContent: { backgroundColor: '#FFF', width: '95%', maxHeight: '90%', borderRadius: 15, padding: 20 },
-  reportWebViewWrap: { flex: 1, minHeight: 380, borderWidth: 1, borderColor: '#D8E2EE', borderRadius: 8, overflow: 'hidden', marginVertical: 10 },
-  reportWebView: { flex: 1, backgroundColor: '#FFFFFF' },
   reportScrollView: { flex: 1, maxHeight: '70%', marginVertical: 10 },
   reportScrollContent: { paddingBottom: 20 },
   reportText: { fontSize: 12, color: '#333', lineHeight: 20 },

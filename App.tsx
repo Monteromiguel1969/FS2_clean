@@ -66,6 +66,21 @@ export default function App() {
   const [temporada, setTemporada] = useState('');
   const [activeMatchData, setActiveMatchData] = useState<{ config: unknown; rotacion: unknown } | null>(null);
   const ensureArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+  const keepActaLinks = (nextPartidos: unknown[], prevPartidos: unknown[]): unknown[] => {
+    const prevById = new Map<string, any>();
+    ensureArray(prevPartidos).forEach((p: any) => {
+      const id = String(p?.id || '').trim();
+      if (id) prevById.set(id, p);
+    });
+    return ensureArray(nextPartidos).map((p: any) => {
+      const id = String(p?.id || '').trim();
+      const prev = id ? prevById.get(id) : null;
+      if (!prev?.acta) return p;
+      const hasActaNow = !!p?.acta;
+      if (hasActaNow) return p;
+      return { ...p, acta: prev.acta };
+    });
+  };
   const resolveNextArray = (
     incoming: unknown[] | ((prev: unknown[]) => unknown[]),
     prev: unknown[]
@@ -140,7 +155,8 @@ export default function App() {
 
   const savePartidos = useCallback(async (newPartidos: unknown[] | ((prev: unknown[]) => unknown[])) => {
     setPartidos((prev) => {
-      const next = resolveNextArray(newPartidos, prev);
+      const nextRaw = resolveNextArray(newPartidos, prev);
+      const next = keepActaLinks(nextRaw, prev);
       persistPartidos(equipo, temporada, next).catch((e) => console.warn('savePartidos error', e));
       return next;
     });
@@ -226,11 +242,6 @@ export default function App() {
               setPartidos={savePartidos}
               editItem={editItem}
               storageKeyBase={buildStorageKey(equipo, temporada)}
-              onSelectPartidoToEdit={(item) => {
-                setEditItem(item);
-                setScreen('PARTIDOS');
-              }}
-              onClearEdit={() => setEditItem(null)}
               onBack={() => { setEditItem(null); setScreen('MENU'); }}
             />
           )}

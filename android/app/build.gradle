@@ -1,24 +1,8 @@
-import java.util.Properties
-import java.io.FileInputStream
-
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
-
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
-
-def keystorePropertiesFile = rootProject.file('keystore.properties')
-def keystoreProperties = new Properties()
-def hasReleaseKeystore = false
-
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-    hasReleaseKeystore = keystoreProperties['storeFile'] &&
-            keystoreProperties['storePassword'] &&
-            keystoreProperties['keyAlias'] &&
-            keystoreProperties['keyPassword']
-}
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -105,11 +89,11 @@ android {
 
     namespace 'com.monterohidalgo.futsal.lega.v4'
     defaultConfig {
-        applicationId 'com.monterohidalgo.futsal_lega_v3'
+        applicationId 'com.monterohidalgo.futsal.lega.v4'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 58
-        versionName "1.0.57"
+        versionCode 59
+        versionName "1.0.58"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -120,22 +104,15 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
-        if (hasReleaseKeystore) {
-            release {
-                storeFile file(keystoreProperties['storeFile'])
-                storePassword keystoreProperties['storePassword']
-                keyAlias keystoreProperties['keyAlias']
-                keyPassword keystoreProperties['keyPassword']
-            }
-        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Use production keystore when available; fallback to debug signing only for local tests.
-            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
+            // Caution! In production, you need to generate your own keystore file.
+            // see https://reactnative.dev/docs/signed-apk-android.
+            signingConfig signingConfigs.debug
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds
@@ -203,4 +180,5 @@ dependencies {
         implementation jscFlavor
     }
 }
+
 

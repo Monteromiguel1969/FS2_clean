@@ -91,7 +91,7 @@ export default function MenuPrincipal({
 
       <Text style={styles.mainTitle}>GESTIÓN TÁCTICA</Text>
 
-      <View style={[styles.scroll, { paddingBottom: Math.max(insets.bottom + 20, 26) }]}>
+      <View style={[styles.scroll, { paddingBottom: Math.max(insets.bottom + 18, 24) }]}>
         {/* FILA 1: Plantilla y Entrenos */}
         <View style={styles.row}>
           <MenuBtn 
@@ -166,17 +166,17 @@ export default function MenuPrincipal({
           />
         </View>
 
-        <View style={styles.footerRow}>
-          <TouchableOpacity style={[styles.footerBtn, styles.btnVolver]} onPress={() => setCambioEquipoVisible(true)}>
-            <FontAwesome name="exchange" size={14} color="#FF4757" />
-            <Text style={styles.btnVolverTxt}>CAMBIAR EQUIPO</Text>
-          </TouchableOpacity>
+        {/* Botón para cambiar de equipo - muestra lista de equipos activos */}
+        <TouchableOpacity style={styles.btnVolver} onPress={() => setCambioEquipoVisible(true)}>
+          <FontAwesome name="exchange" size={14} color="#FF4757" />
+          <Text style={styles.btnVolverTxt}>CAMBIAR DE EQUIPO / TEMPORADA</Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.footerBtn, styles.btnSalir]} onPress={onExit}>
-            <FontAwesome name="power-off" size={14} color="#FFFFFF" />
-            <Text style={styles.btnSalirTxt}>SALIR APP</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Botón para salir de la aplicación */}
+        <TouchableOpacity style={styles.btnSalir} onPress={onExit}>
+          <FontAwesome name="power-off" size={14} color="#FFFFFF" />
+          <Text style={styles.btnSalirTxt}>SALIR DE LA APLICACIÓN</Text>
+        </TouchableOpacity>
       </View>
 
       <GestionDatosModal
@@ -243,13 +243,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12 
   },
   headerMini: { 
-    marginTop: 8, 
+    marginTop: 6, 
     alignItems: 'flex-end', 
     borderBottomWidth: 0.5, 
     borderBottomColor: '#1565C0', 
     paddingBottom: 4 
   },
-  clubText: { 
+  clubText: {
     color: '#FFF', 
     fontSize: 11, 
     fontWeight: 'bold', 
@@ -258,14 +258,13 @@ const styles = StyleSheet.create({
   },
   tempText: { 
     color: '#00aaff', 
-    fontSize: 9.5, 
+    fontSize: 10, 
     fontWeight: '600' 
   },
   summaryRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, gap: 5 },
   summaryText: { color: '#CCC', fontSize: 9.5, lineHeight: 12, flex: 1 },
   summaryCalTitle: { color: '#B3E5FC', fontSize: 9.5, fontWeight: '700', marginBottom: 4 },
-  // Altura aproximada: titulo + 3 lineas visibles; el resto con scroll interno.
-  summaryCalList: { maxHeight: 50 },
+  summaryCalList: { maxHeight: 48 },
   summaryCalCard: {
     backgroundColor: '#001E3D',
     borderRadius: 10,
@@ -283,7 +282,9 @@ const styles = StyleSheet.create({
     marginVertical: 5, 
     letterSpacing: 1 
   },
-  scroll: { flex: 1 },
+  scroll: { 
+    flex: 1
+  },
   row: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 
@@ -304,9 +305,9 @@ const styles = StyleSheet.create({
     shadowRadius: 5
   },
   iconCircle: { 
-    width: 32, 
-    height: 32, 
-    borderRadius: 16, 
+    width: 30, 
+    height: 30, 
+    borderRadius: 15, 
     justifyContent: 'center', 
     alignItems: 'center', 
     marginBottom: 3 
@@ -317,23 +318,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold', 
     letterSpacing: 0.2 
   },
-  footerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-    marginTop: 6,
-  },
-  footerBtn: {
-    flex: 1,
-  },
   btnVolver: { 
+    marginTop: 5, 
     flexDirection: 'row', 
     alignItems: 'center', 
     justifyContent: 'center', 
-    gap: 7,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
+    gap: 6, 
+    paddingVertical: 7,
+    paddingHorizontal: 9,
     borderRadius: 10, 
     borderWidth: 1, 
     borderColor: '#FF4757',
@@ -345,12 +337,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold' 
   },
   btnSalir: {
+    marginTop: 5,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 7,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 9,
     borderRadius: 10,
     backgroundColor: '#FF4757'
   },

@@ -1,12 +1,11 @@
 import React, { useRef, useState, useEffect } from "react";
 import {
   View, Dimensions, StyleSheet, Animated, Text, TouchableOpacity,
-  ScrollView, FlatList, PanResponder, Modal, Alert, TextInput, Image
+  ScrollView, PanResponder, Modal, Alert, TextInput, Image
 } from "react-native";
 import Svg, { Rect, Line, Circle, Path } from "react-native-svg";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as ScreenOrientation from 'expo-screen-orientation';
 import { getPlayerCompositeScore, normalizePlayerRatings } from '../utils/playerRating';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
@@ -179,6 +178,10 @@ const ESTRATEGIAS_FULL = [
 const DEFAULT_SYSTEM = "1-2-2 (Cuadrado)";
 const PORTERO_PROPIO_Y = 1 - GK_OFFSET_NORM; // simetría exacta con portero rival
 const PORTERO_RIVAL_Y = FIELD_TOP_OFFSET_NORM + GK_OFFSET_NORM; // asegura portero rival dentro de campo, delante de línea de gol
+const PLAYER_SIZE_FIELD = 46;
+const PLAYER_SIZE_BENCH = 40;
+const PLAYER_SIZE_RIVAL = 28;
+const PLAYER_RADIUS_FACTOR = 0.55;
 
 type RoleBase = 'portero' | 'cierre' | 'ala' | 'pivot';
 type SystemSlot = { key: string; roleBase: RoleBase; profile: string; coord: { x: number; y: number } };
@@ -310,24 +313,16 @@ export default function PizarraPro({ players, setPlayers, onBack }: any) {
   const [velocidad, setVelocidad] = useState(1);
   const [systemConfigModal, setSystemConfigModal] = useState(false);
   const [systemToConfigure, setSystemToConfigure] = useState<string | null>(null);
-  const [selectedSystemName, setSelectedSystemName] = useState<string>(DEFAULT_SYSTEM);
   const [manualBySlot, setManualBySlot] = useState<Record<string, string>>({});
   const [drawMode, setDrawMode] = useState<'none' | 'draw' | 'arrow'>('none');
   const [drawColor, setDrawColor] = useState('#FFD54F');
   const [drawItems, setDrawItems] = useState<DrawItem[]>([]);
   const [showSequenceTrails, setShowSequenceTrails] = useState(true);
+  const [deviceRotationDeg, setDeviceRotationDeg] = useState(0);
   const [activeDraw, setActiveDraw] = useState<{ points: DrawPoint[] } | null>(null);
   const drawModeRef = useRef(drawMode);
   const drawColorRef = useRef(drawColor);
   const modoReproduccionRef = useRef(modoReproduccion);
-
-  useEffect(() => {
-    // Pizarra siempre fija en vertical para evitar rotaciones accidentales.
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
-    return () => {
-      ScreenOrientation.unlockAsync().catch(() => {});
-    };
-  }, []);
 
   useEffect(() => {
     drawModeRef.current = drawMode;
@@ -340,6 +335,20 @@ export default function PizarraPro({ players, setPlayers, onBack }: any) {
   useEffect(() => {
     modoReproduccionRef.current = modoReproduccion;
   }, [modoReproduccion]);
+
+  useEffect(() => {
+    const updateRotation = () => {
+      const { width, height } = Dimensions.get('window');
+      setDeviceRotationDeg(width > height ? 90 : 0);
+    };
+    updateRotation();
+    const sub = Dimensions.addEventListener('change', updateRotation);
+    return () => {
+      try {
+        (sub as any)?.remove?.();
+      } catch {}
+    };
+  }, []);
 
   const pos = useRef<any>({
     ball: new Animated.ValueXY({ x: FIELD_W / 2, y: FIELD_H / 2 }),
@@ -594,20 +603,22 @@ useEffect(() => {
   const offset = useRef<any>({});
   const renderFicha = (p: any, size = 40, rival = false) => (
     <View style={[styles.fichaBase, {
-          width: size, height: size, borderRadius: size / 2,
+          width: size, height: size, borderRadius: size * PLAYER_RADIUS_FACTOR,
           backgroundColor: rival ? '#B71C1C' : '#1565C0',
           borderWidth: 2, borderColor: '#FFF',
         }]}>
-      {!rival && p.photo ? (
-        <Image 
-          source={{ uri: p.photo }} 
-          style={{ width: '100%', height: '100%', borderRadius: size / 2 }} 
-        />
-      ) : (
-        <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: size * 0.4 }}>
-          {rival ? 'R' : p.number ?? p.idx ?? ''}
-        </Text>
-      )}
+      <View style={{ transform: [{ rotate: `${deviceRotationDeg}deg` }] }}>
+        {!rival && p.photo ? (
+          <Image
+            source={{ uri: p.photo }}
+            style={{ width: '100%', height: '100%', borderRadius: size * PLAYER_RADIUS_FACTOR }}
+          />
+        ) : (
+          <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: size * 0.4 }}>
+            {rival ? 'R' : p.number ?? p.idx ?? ''}
+          </Text>
+        )}
+      </View>
     </View>
   );
 
@@ -757,7 +768,6 @@ useEffect(() => {
   const abrirConfiguracionSistema = (systemName: string) => {
     const { slots } = getSystemSlots(systemName);
     if (!slots.length) return;
-    setSelectedSystemName(systemName);
     setSystemToConfigure(systemName);
 
     // Precarga selección manual con la opción automática para acelerar ajustes.
@@ -1056,10 +1066,18 @@ useEffect(() => {
               }}
             >
               <View style={p.disponibilidad === 'No disponible' ? styles.unavailableFrame : undefined}>
-                {renderFicha(p, 35)}
+                {renderFicha(p, PLAYER_SIZE_BENCH)}
                 {p.onCourt && <View style={styles.onCourtDot} />}
               </View>
-              <Text style={[styles.benchName, p.disponibilidad === 'No disponible' && styles.benchNameUnavailable]}>{p.name}</Text>
+              <Text
+                style={[
+                  styles.benchName,
+                  { transform: [{ rotate: `${deviceRotationDeg}deg` }] },
+                  p.disponibilidad === 'No disponible' && styles.benchNameUnavailable,
+                ]}
+              >
+                {p.name}
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -1106,7 +1124,7 @@ useEffect(() => {
         { transform: pos.current[p.id].getTranslateTransform() }
       ]}
     >
-      {renderFicha(p, 40)}
+      {renderFicha(p, PLAYER_SIZE_FIELD)}
     </Animated.View>
   );
 })}
@@ -1122,7 +1140,7 @@ useEffect(() => {
       {...createPan(id).panHandlers} 
       style={[styles.pNode, { transform: pos.current[id].getTranslateTransform() }]}
     >
-      {renderFicha({ idx: i }, 24, true)}
+      {renderFicha({ idx: i }, PLAYER_SIZE_RIVAL, true)}
     </Animated.View>
   );
 })}
@@ -1345,145 +1363,116 @@ useEffect(() => {
         <View style={styles.overlay}>
           <View style={styles.mContent}>
             <Text style={styles.mT}>MENÚ</Text>
-            <TouchableOpacity style={styles.btnC} onPress={() => { setSelectedSystemName(DEFAULT_SYSTEM); setSisModal(true); setMenuAbierto(false); }}><Text style={{ color: '#FFF' }}>SISTEMAS</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.btnC} onPress={() => { setStratModal(true); setMenuAbierto(false); }}><Text style={{ color: '#FFF' }}>ESTRATEGIAS</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.btnC} onPress={() => setSisModal(true)}><Text style={{ color: '#FFF' }}>SISTEMAS</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.btnC} onPress={() => setStratModal(true)}><Text style={{ color: '#FFF' }}>ESTRATEGIAS</Text></TouchableOpacity>
             <TouchableOpacity style={styles.btnC} onPress={() => { setBiblioModal(true); setMenuAbierto(false); }}><Text style={{ color: '#FFF' }}>BIBLIOTECA</Text></TouchableOpacity>
             <TouchableOpacity style={[styles.btnC, { backgroundColor: '#D32F2F' }]} onPress={() => setMenuAbierto(false)}><Text style={{ color: '#FFF' }}>CERRAR</Text></TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      <Modal visible={sisModal} transparent animationType="slide">
-        <View style={[styles.sisModalContainer, { paddingTop: Math.max(insets.top + 6, 12), paddingBottom: Math.max(insets.bottom + 8, 14) }]}>
-          <View style={styles.sisContent}>
-            <Text style={styles.mT}>SISTEMAS DE JUEGO</Text>
-            <View style={styles.systemsListBox}>
-              <FlatList
-                style={{ width: '100%' }}
-                data={Object.keys(SISTEMAS_POS)}
-                keyExtractor={(item) => item}
-                contentContainerStyle={{ paddingBottom: insets.bottom + 40, paddingHorizontal: 2 }}
-                showsVerticalScrollIndicator
-                nestedScrollEnabled
-                renderItem={({ item: k }) => (
-                  <TouchableOpacity
-                    style={[styles.cardDetalle, selectedSystemName === k && styles.cardDetalleSelected]}
-                    onPress={() => abrirConfiguracionSistema(k)}
-                  >
-                    <Text style={styles.cardTituloPrincipal}>{k}</Text>
-                    <Text style={styles.infoText}><Text style={styles.infoLabel}>Situación: </Text>{SISTEMAS_POS[k].situacion}</Text>
-                    <Text style={styles.infoText}><Text style={styles.infoLabel}>Estructura: </Text>{SISTEMAS_POS[k].estructura}</Text>
-                    <Text style={styles.infoText}><Text style={styles.infoLabel}>Roles: </Text>{SISTEMAS_POS[k].roles}</Text>
-                    <Text style={[styles.infoText, { color: '#4CAF50', fontWeight: 'bold' }]}>{SISTEMAS_POS[k].cuando}</Text>
-                    <Text style={styles.infoReact}>{SISTEMAS_POS[k].reaccion}</Text>
-                  </TouchableOpacity>
-                )}
-              />
-            </View>
-            <View style={{ width: '100%', paddingTop: 8, paddingBottom: Math.max(insets.bottom, 4) }}>
-              <TouchableOpacity style={[styles.btnC, { backgroundColor: '#D32F2F', width: '100%', marginTop: 0 }]} onPress={() => setSisModal(false)}>
-                <Text style={{ color: '#FFF' }}>CERRAR</Text>
-              </TouchableOpacity>
-            </View>
+      <Modal visible={sisModal} transparent animationType="fade">
+        <View style={styles.overlay}>
+          <View style={styles.mContentFull}>
+            <Text style={styles.mT}>SISTEMAS DE JUEGO [cite: 2026-01-01]</Text>
+            <ScrollView
+              style={{ width: '100%', flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 40, flexGrow: 1 }}
+              showsVerticalScrollIndicator
+              alwaysBounceVertical
+            >
+              {Object.keys(SISTEMAS_POS).map((k) => (
+                <TouchableOpacity key={k} style={styles.cardDetalle} onPress={() => abrirConfiguracionSistema(k)}>
+                  <Text style={styles.cardTituloPrincipal}>{k}</Text>
+                  <Text style={styles.infoText}><Text style={styles.infoLabel}>Situación: </Text>{SISTEMAS_POS[k].situacion}</Text>
+                  <Text style={styles.infoText}><Text style={styles.infoLabel}>Estructura: </Text>{SISTEMAS_POS[k].estructura}</Text>
+                  <Text style={styles.infoText}><Text style={styles.infoLabel}>Roles: </Text>{SISTEMAS_POS[k].roles}</Text>
+                  <Text style={[styles.infoText, { color: '#4CAF50', fontWeight: 'bold' }]}>{SISTEMAS_POS[k].cuando}</Text>
+                  <Text style={styles.infoReact}>{SISTEMAS_POS[k].reaccion}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={[styles.btnC, { backgroundColor: '#D32F2F', width: '100%' }]} onPress={() => setSisModal(false)}><Text style={{ color: '#FFF' }}>VOLVER</Text></TouchableOpacity>
           </View>
         </View>
       </Modal>
 
       <Modal visible={systemConfigModal} transparent animationType="slide">
         <View style={styles.overlay}>
-          <View style={styles.systemConfigShell}>
-            <View style={styles.systemConfigBox}>
-              <Text style={styles.mT}>CONFIGURAR {systemToConfigure || 'SISTEMA'}</Text>
-              {configuredSystem ? (
-                <ScrollView
-                  style={styles.systemConfigScroll}
-                  contentContainerStyle={styles.systemConfigScrollContent}
-                  showsVerticalScrollIndicator
-                  nestedScrollEnabled
-                  scrollEnabled
-                  alwaysBounceVertical
-                >
-                  <Text style={[styles.infoText, { marginBottom: 6 }]}>
-                    <Text style={styles.infoLabel}>Alineación ideal: </Text>
-                    {systemToConfigure || '-'}
-                  </Text>
-                  <Text style={styles.infoText}>
-                    <Text style={styles.infoLabel}>Necesidades: </Text>
-                    {`Portero ${configuredRequirements.portero} · Cierre ${configuredRequirements.cierre} · Ala ${configuredRequirements.ala} · Pívot ${configuredRequirements.pivot}`}
-                  </Text>
-                  <Text style={[styles.infoText, { marginBottom: 10 }]}>
-                    Puedes elegir manualmente cada plaza o aplicar asignación automática por valoración.
-                  </Text>
+          <View style={styles.mContentFull}>
+            <Text style={styles.mT}>CONFIGURAR {systemToConfigure || 'SISTEMA'}</Text>
+            {configuredSystem ? (
+              <ScrollView style={{ width: '100%', marginBottom: 10 }}>
+                <Text style={styles.infoText}>
+                  <Text style={styles.infoLabel}>Necesidades: </Text>
+                  {`Portero ${configuredRequirements.portero} · Cierre ${configuredRequirements.cierre} · Ala ${configuredRequirements.ala} · Pívot ${configuredRequirements.pivot}`}
+                </Text>
+                <Text style={[styles.infoText, { marginBottom: 10 }]}>
+                  Puedes elegir manualmente cada plaza o aplicar asignación automática por valoración.
+                </Text>
 
-                  {(Object.keys(availableByRole) as RoleBase[]).map((role) => (
-                    <View key={`avail-${role}`} style={styles.availabilityBox}>
-                      <Text style={styles.infoLabel}>{roleLabel(role)}s disponibles:</Text>
-                      <Text style={styles.availabilityTxt}>
-                        {availableByRole[role].length
-                          ? availableByRole[role].map((p: any) => `${p.name} (S${p.valoracionStaff ?? 3}/I${p.valoracionIA ?? 3})`).join(' · ')
-                          : 'Ninguno'}
+                {(Object.keys(availableByRole) as RoleBase[]).map((role) => (
+                  <View key={`avail-${role}`} style={styles.availabilityBox}>
+                    <Text style={styles.infoLabel}>{roleLabel(role)}s disponibles:</Text>
+                    <Text style={styles.availabilityTxt}>
+                      {availableByRole[role].length
+                        ? availableByRole[role].map((p: any) => `${p.name} (S${p.valoracionStaff ?? 3}/I${p.valoracionIA ?? 3})`).join(' · ')
+                        : 'Ninguno'}
+                    </Text>
+                  </View>
+                ))}
+
+                {configuredSlots.map((slot, idx) => {
+                  const list = availableByRole[slot.roleBase];
+                  return (
+                    <View key={`slot-${idx}-${slot.key}`} style={styles.slotCard}>
+                      <Text style={styles.infoLabel}>
+                        {`Plaza ${idx + 1}: ${roleLabel(slot.roleBase)} (${slot.profile.replace('_', ' ')})`}
                       </Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+                        {list.map((p: any) => {
+                          const active = manualBySlot[slot.key] === p.id;
+                          return (
+                            <TouchableOpacity
+                              key={`pick-${slot.key}-${p.id}`}
+                              style={[styles.pickChip, active && styles.pickChipActive]}
+                              onPress={() =>
+                                setManualBySlot((prev) => ({
+                                  ...prev,
+                                  [slot.key]: prev[slot.key] === p.id ? '' : p.id,
+                                }))
+                              }
+                            >
+                              <Text style={[styles.pickChipTxt, active && styles.pickChipTxtActive]}>
+                                {`${p.name} (${p.valoracionStaff ?? 3}/${p.valoracionIA ?? 3})`}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
                     </View>
-                  ))}
-
-                  {configuredSlots.map((slot, idx) => {
-                    const list = availableByRole[slot.roleBase];
-                    return (
-                      <View key={`slot-${idx}-${slot.key}`} style={styles.slotCard}>
-                        <Text style={styles.infoLabel}>
-                          {`Plaza ${idx + 1}: ${roleLabel(slot.roleBase)} (${slot.profile.replace('_', ' ')})`}
-                        </Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-                          {list.map((p: any) => {
-                            const active = manualBySlot[slot.key] === p.id;
-                            return (
-                              <TouchableOpacity
-                                key={`pick-${slot.key}-${p.id}`}
-                                style={[styles.pickChip, active && styles.pickChipActive]}
-                                onPress={() =>
-                                  setManualBySlot((prev) => ({
-                                    ...prev,
-                                    [slot.key]: prev[slot.key] === p.id ? '' : p.id,
-                                  }))
-                                }
-                              >
-                                <Text style={[styles.pickChipTxt, active && styles.pickChipTxtActive]}>
-                                  {`${p.name} (${p.valoracionStaff ?? 3}/${p.valoracionIA ?? 3})`}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </ScrollView>
-                      </View>
-                    );
-                  })}
-                </ScrollView>
-              ) : (
-                <View style={{ flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' }}>
-                  <Text style={styles.infoText}>No hay datos del sistema seleccionado.</Text>
-                </View>
-              )}
-            </View>
-            <View style={[styles.systemConfigActionsBar, { paddingBottom: Math.max(insets.bottom + 8, 14) }]}> 
-              <TouchableOpacity
-                style={[styles.btnC, { backgroundColor: '#2E7D32', width: '100%', marginTop: 0 }]}
-                onPress={() => systemToConfigure && aplicarSistemaAutomatico(systemToConfigure)}
-              >
-                <Text style={{ color: '#FFF' }}>AUTOASIGNAR</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btnC, { backgroundColor: '#1565C0', width: '100%' }]}
-                onPress={aplicarSistemaManual}
-              >
-                <Text style={{ color: '#FFF' }}>APLICAR MANUAL</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btnC, { backgroundColor: '#D32F2F', width: '100%' }]}
-                onPress={() => setSystemConfigModal(false)}
-              >
-                <Text style={{ color: '#FFF' }}>CERRAR</Text>
-              </TouchableOpacity>
-            </View>
+                  );
+                })}
+              </ScrollView>
+            ) : null}
+            <TouchableOpacity
+              style={[styles.btnC, { backgroundColor: '#2E7D32', width: '100%' }]}
+              onPress={() => systemToConfigure && aplicarSistemaAutomatico(systemToConfigure)}
+            >
+              <Text style={{ color: '#FFF' }}>AUTOASIGNAR</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.btnC, { backgroundColor: '#1565C0', width: '100%' }]}
+              onPress={aplicarSistemaManual}
+            >
+              <Text style={{ color: '#FFF' }}>APLICAR MANUAL</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.btnC, { backgroundColor: '#D32F2F', width: '100%' }]}
+              onPress={() => setSystemConfigModal(false)}
+            >
+              <Text style={{ color: '#FFF' }}>CERRAR</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1584,7 +1573,16 @@ const styles = StyleSheet.create({
   },
   fichaBase: { justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
   onCourtDot: { position: 'absolute', top: 0, right: 0, width: 10, height: 10, borderRadius: 5, backgroundColor: '#4CAF50' },
-  pNode: { position: 'absolute', width: 40, height: 40, left: -20, top: -20, justifyContent: 'center', alignItems: 'center', zIndex: 10 },
+  pNode: {
+    position: 'absolute',
+    width: PLAYER_SIZE_FIELD,
+    height: PLAYER_SIZE_FIELD,
+    left: -PLAYER_SIZE_FIELD / 2,
+    top: -PLAYER_SIZE_FIELD / 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10
+  },
   compactControls: {
     backgroundColor: 'rgba(20,20,20,0.95)', 
     borderRadius: 15, 
@@ -1609,21 +1607,12 @@ const styles = StyleSheet.create({
   colorBtnActive: { borderWidth: 2, borderColor: '#FFF' },
   cText: { color: '#FFF', fontSize: 10, fontWeight: 'bold' },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
-  sisModalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.86)', paddingHorizontal: 10 },
-  sisContent: { width: '100%', flex: 1, backgroundColor: '#1A1A1A', borderRadius: 20, padding: 16, borderWidth: 1, borderColor: '#333', alignItems: 'center' },
-  systemsListBox: { width: '100%', height: Math.max(306, Math.min(SCREEN_H * 0.51, 440)) },
   mContent: { width: '85%', backgroundColor: '#1A1A1A', borderRadius: 20, padding: 25, borderWidth: 1, borderColor: '#333' },
-  mContentFull: { width: '92%', height: '92%', backgroundColor: '#1A1A1A', borderRadius: 20, paddingHorizontal: 20, paddingTop: 20, borderWidth: 1, borderColor: '#333', alignItems: 'center' },
-  systemConfigShell: { width: '92%', height: '86%', alignItems: 'center' },
-  systemConfigBox: { width: '100%', height: '46%', backgroundColor: '#1A1A1A', borderRadius: 20, paddingHorizontal: 18, paddingTop: 14, borderWidth: 1, borderColor: '#333' },
-  systemConfigScroll: { width: '100%', flex: 1, minHeight: 0 },
-  systemConfigScrollContent: { paddingBottom: 140 },
-  systemConfigActionsBar: { width: '100%', height: '34%', marginTop: 8, backgroundColor: '#1A1A1A', borderRadius: 12, paddingHorizontal: 12, paddingTop: 8, borderWidth: 1, borderColor: '#333', justifyContent: 'flex-start' },
+  mContentFull: { width: '90%', height: '85%', backgroundColor: '#1A1A1A', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: '#333', alignItems: 'center' },
   mT: { color: '#FFF', fontWeight: 'bold', marginBottom: 15, textAlign: 'center', fontSize: 16 },
   btnC: { backgroundColor: '#2196F3', paddingVertical: 10, borderRadius: 8, marginTop: 10, alignItems: 'center', width: '100%' },
   input: { backgroundColor: '#111', borderRadius: 8, padding: 10, color: '#FFF', marginBottom: 10 },
   cardDetalle: { backgroundColor: '#262626', borderRadius: 10, padding: 12, marginBottom: 15, borderLeftWidth: 4, borderLeftColor: '#2196F3', width: '100%' },
-  cardDetalleSelected: { borderColor: '#4CAF50', borderWidth: 1.5, borderLeftColor: '#4CAF50' },
   cardTituloPrincipal: { color: '#2196F3', fontSize: 14, fontWeight: 'bold', marginBottom: 5 },
   infoLabel: { color: '#AAA', fontSize: 11, fontWeight: 'bold' },
   infoText: { color: '#EEE', fontSize: 11, marginBottom: 2 },

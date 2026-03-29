@@ -11,7 +11,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { formatDateExport, parseToDate } from '../utils/dateFormat';
+import { formatDateExport, formatDateGlobal, parseToDate } from '../utils/dateFormat';
 import { explainValoracionIA } from '../utils/playerRating';
 
 const USER_SPREADSHEET_KEY = '@futsal_user_spreadsheet_id';
@@ -199,6 +199,7 @@ export interface EvaluacionDIExportRow {
 
 type MatrixCell = string | number;
 type MatrixData = MatrixCell[][];
+type EvaluacionDIKind = 'all' | 'ia' | 'personal';
 
 // Tipos de datos internos de la app
 interface Player {
@@ -513,10 +514,12 @@ function convertRowsToPartidos(rows: PartidoRow[], players: Player[]): Partido[]
     const lugar = (row.Ubicion || row.lugar || 'LOCAL').toString().toUpperCase();
     const tipo = (row.Tipo_Competicion || row.tipo || 'LIGA').toString().toUpperCase();
 
+    const fechaNormalizada = formatDateGlobal(row.fecha || row.f || '') || String(row.fecha || '');
+    const idBase = String(row.f || row.id || `${fechaNormalizada}_${row.rival || 'partido'}`).trim();
     return {
-      id: (row.f || row.id || Date.now().toString()) + Math.random().toString(36).substr(2, 5),
+      id: idBase || Date.now().toString(),
       rival: row.rival || '',
-      fecha: row.fecha || '',
+      fecha: fechaNormalizada,
       lugar: lugar === 'VISITANTE' ? 'VISITANTE' : 'LOCAL',
       tipo: ['LIGA', 'COPA', 'AMISTOSO', 'OTRO'].includes(tipo) ? tipo : 'LIGA',
       golesFavor: parseInt(row.goles_favor) || 0,
@@ -534,7 +537,8 @@ function convertRowsToEntrenamientos(rows: any[], players: Player[] = []): Entre
   const entrenamientosMap: { [fecha: string]: Entrenamiento } = {};
 
   rows.forEach(row => {
-    const fechaKey = row['FECHA ENTRENAMIENTO'] || row.Fecha || row.fecha;
+    const fechaKeyRaw = row['FECHA ENTRENAMIENTO'] || row.Fecha || row.fecha;
+    const fechaKey = formatDateGlobal(fechaKeyRaw) || String(fechaKeyRaw || '');
     if (!fechaKey) return;
 
     const jugadorName = String(row.Jugador || row.nombre || row.name || '').trim();
@@ -653,154 +657,26 @@ function convertEvaluacionesDIToRows(players: Player[]): EvaluacionDIExportRow[]
   return rows;
 }
 
-const IA_MATRIX_ITEMS: Array<{ type: 'section' | 'metric'; label: string; key?: string }> = [
-  { type: 'section', label: 'BLOQUE TECNICO' },
-  { type: 'metric', label: 'Control', key: 'control' },
-  { type: 'metric', label: 'Pase', key: 'pase' },
-  { type: 'section', label: 'BLOQUE TACTICO' },
-  { type: 'metric', label: 'Lectura de juego', key: 'lecturaJuego' },
-  { type: 'metric', label: 'Toma de decision', key: 'tomaDecision' },
-  { type: 'section', label: 'BLOQUE FISICO' },
-  { type: 'metric', label: 'Velocidad', key: 'velocidad' },
-  { type: 'metric', label: 'Resistencia', key: 'resistencia' },
-  { type: 'section', label: 'BLOQUE MENTAL' },
-  { type: 'metric', label: 'Concentracion', key: 'concentracion' },
-  { type: 'metric', label: 'Competitividad', key: 'competitividad' },
-];
+function isIADetailEvaluation(ev: any): boolean {
+  return Array.isArray(ev?.bloques) && ev.bloques.length > 0;
+}
 
-const PERSONAL_FORM_MATRIX: Array<{ section: string; items: Array<{ id: string; label: string }> }> = [
-  {
-    section: 'SECCION 1 · EVALUACION',
-    items: [
-      { id: 'edad_personal', label: 'EDAD' },
-      { id: 'anios_fs', label: 'AÑOS EXPERIENCIA EN FS' },
-    ],
-  },
-  {
-    section: 'SECCION 2 · COMUNICACION VERBAL',
-    items: [
-      { id: 'volumen_voz', label: 'VOLUMEN DE VOZ' },
-      { id: 'claridad_coherencia', label: 'CLARIDAD Y COHERENCIA' },
-      { id: 'habilidades_expresion', label: 'HABILIDADES DE EXPRESION' },
-    ],
-  },
-  {
-    section: 'SECCION 3 · COMUNICACION NO VERBAL',
-    items: [
-      { id: 'lenguaje_corporal', label: 'LENGUAJE CORPORAL' },
-      { id: 'contacto_visual', label: 'CONTACTO VISUAL' },
-      { id: 'gestos_expresiones', label: 'GESTOS Y EXPRESIONES FACIALES' },
-    ],
-  },
-  {
-    section: 'SECCION 4 · COMUNICACION EN EQUIPO',
-    items: [
-      { id: 'colaboracion_escucha', label: 'COLABORACION Y ESCUCHA' },
-      { id: 'comunicacion_companeros', label: 'COMUNICACION CON COMPAÑEROS' },
-    ],
-  },
-  {
-    section: 'SECCION 5 · PARTICIPACION Y DISFRUTE',
-    items: [
-      { id: 'asiste_regularmente', label: 'ASISTE REGULARMENTE A ENTRENAMIENTOS Y PARTIDOS' },
-      { id: 'motivado_disfruta', label: 'SE MUESTRA MOTIVADO Y DISFRUTA JUGANDO' },
-      { id: 'cumple_normas', label: 'CUMPLE CON LAS NORMAS Y RESPONSABILIDADES DEL EQUIPO' },
-    ],
-  },
-  {
-    section: 'SECCION 6 · DESARROLLO Y HABILIDADES',
-    items: [
-      { id: 'mejora_tecnica', label: 'HA MEJORADO EL CONTROL DEL BALON, PASE, TIRO, ETC' },
-      { id: 'comprende_juego_equipo', label: 'COMPRENDE Y APLICA CONCEPTOS BASICOS DEL JUEGO EN EQUIPO' },
-      { id: 'fomenta_respeto_colaboracion', label: 'FOMENTA LA COMUNICACION, EL RESPETO Y LA COLABORACION' },
-    ],
-  },
-  {
-    section: 'SECCION 7 · HABILIDADES TECNICAS CONTROL DEL BALON',
-    items: [
-      { id: 'cb_precision', label: 'CONTROL DEL BALON · PRECISION' },
-      { id: 'cb_mantenimiento', label: 'CONTROL DEL BALON · MANTENIMIENTO' },
-      { id: 'cb_movimiento', label: 'CONTROL DEL BALON · CONTROL EN MOVIMIENTO' },
-      { id: 'pase_precision', label: 'PASE · PRECISION' },
-      { id: 'pase_fuerza', label: 'PASE · FUERZA' },
-      { id: 'pase_presion', label: 'PASE · SITUACIONES DE PRESION' },
-      { id: 'regate_capacidad', label: 'REGATE · CAPACIDAD' },
-      { id: 'regate_variedad', label: 'REGATE · VARIEDAD' },
-      { id: 'regate_efectividad', label: 'REGATE · EFECTIVIDAD' },
-      { id: 'tiro_precision', label: 'TIRO · PRECISION' },
-      { id: 'tiro_potencia', label: 'TIRO · POTENCIA' },
-      { id: 'tiro_oportunidad', label: 'TIRO · OPORTUNIDAD' },
-      { id: 'conduccion_seguridad', label: 'CONDUCCION · SEGURIDAD' },
-      { id: 'conduccion_ritmo', label: 'CONDUCCION · CAMBIO DE RITMO' },
-      { id: 'conduccion_espacios', label: 'CONDUCCION · ESPACIOS REDUCIDOS' },
-    ],
-  },
-  {
-    section: 'SECCION 8 · HABILIDADES TECNICAS Y FISICAS',
-    items: [
-      { id: 'pos_estrategico', label: 'POSICIONAMIENTO · ESTRATEGICO' },
-      { id: 'pos_roles', label: 'POSICIONAMIENTO · ROLES' },
-      { id: 'pos_apoyo', label: 'POSICIONAMIENTO · APOYO' },
-      { id: 'td_opciones', label: 'TOMA DE DECISIONES · OPCIONES DE JUEGO' },
-      { id: 'td_rapidez', label: 'TOMA DE DECISIONES · RAPIDEZ' },
-      { id: 'td_individual_colectivo', label: 'TOMA DE DECISIONES · JUEGO INDIVIDUAL/COLECTIVO' },
-      { id: 'equipo_comunicacion', label: 'JUEGO EN EQUIPO · COMUNICACION' },
-      { id: 'equipo_cooperacion', label: 'JUEGO EN EQUIPO · COOPERACION' },
-      { id: 'equipo_respeto', label: 'JUEGO EN EQUIPO · RESPETO' },
-      { id: 'entend_reglas', label: 'ENTENDIMIENTO DEL JUEGO · REGLAS' },
-      { id: 'entend_estrategia', label: 'ENTENDIMIENTO DEL JUEGO · ESTRATEGIA' },
-      { id: 'entend_adaptacion', label: 'ENTENDIMIENTO DEL JUEGO · ADAPTACION' },
-      { id: 'res_nivel', label: 'RESISTENCIA · NIVEL DE RENDIMIENTO' },
-      { id: 'res_recuperacion', label: 'RESISTENCIA · RECUPERACION' },
-      { id: 'res_participacion', label: 'RESISTENCIA · PARTICIPACION' },
-      { id: 'vel_carrera', label: 'VELOCIDAD · CARRERA' },
-      { id: 'vel_reaccion', label: 'VELOCIDAD · REACCION' },
-      { id: 'vel_aceleracion', label: 'VELOCIDAD · ACELERACION' },
-      { id: 'fuerza_piernas', label: 'FUERZA · PIERNAS' },
-      { id: 'fuerza_tren_sup', label: 'FUERZA · TREN SUPERIOR' },
-      { id: 'fuerza_coordinacion', label: 'FUERZA · COORDINACION' },
-      { id: 'agi_cambio_dir', label: 'AGILIDAD · CAMBIO DE DIRECCION' },
-      { id: 'agi_equilibrio', label: 'AGILIDAD · EQUILIBRIO' },
-      { id: 'agi_esquivar', label: 'AGILIDAD · ESQUIVAR' },
-    ],
-  },
-  {
-    section: 'SECCION 9 · ADAPTACION Y SUPERACION',
-    items: [
-      { id: 'prog_ritmo', label: 'PROGRESION · HA PROGRESADO A SU PROPIO RITMO' },
-      { id: 'prog_supera_obstaculos', label: 'PROGRESION · HA SUPERADO OBSTACULOS Y MEJORADO HABILIDADES' },
-      { id: 'prog_confianza', label: 'PROGRESION · HA GANADO CONFIANZA EN SI MISMO' },
-      { id: 'mot_entusiasmo', label: 'MOTIVACION · ENTUSIASMO' },
-      { id: 'mot_esfuerzo', label: 'MOTIVACION · ESFUERZO' },
-      { id: 'mot_perseverancia', label: 'MOTIVACION · PERSEVERANCIA' },
-      { id: 'conf_seguridad', label: 'CONFIANZA · SEGURIDAD' },
-      { id: 'conf_presion', label: 'CONFIANZA · PRESION' },
-      { id: 'conf_actitud', label: 'CONFIANZA · ACTITUD' },
-    ],
-  },
-  {
-    section: 'SECCION 10 · INCLUSION Y DIVERSIDAD',
-    items: [
-      { id: 'incluido_valorado', label: 'SE SIENTE INCLUIDO Y VALORADO' },
-      { id: 'respeta_diferencias', label: 'RESPETA DIFERENCIAS Y FOMENTA IGUALDAD' },
-      { id: 'apoyo_companeros', label: 'SE APOYA ENTRE COMPAÑEROS Y SE AYUDA A MEJORAR' },
-      { id: 'resp_companeros', label: 'RESPETO · COMPAÑEROS' },
-      { id: 'resp_entrenadores', label: 'RESPETO · ENTRENADORES' },
-      { id: 'resp_normas', label: 'RESPETO · NORMAS' },
-      { id: 'comp_disciplina', label: 'COMPORTAMIENTO · DISCIPLINA' },
-      { id: 'comp_participacion', label: 'COMPORTAMIENTO · PARTICIPACION' },
-      { id: 'comp_control_emocional', label: 'COMPORTAMIENTO · CONTROL EMOCIONAL' },
-    ],
-  },
-  {
-    section: 'SECCION 11 · BIENESTAR PERSONAL',
-    items: [
-      { id: 'bien_salud', label: 'EL DEPORTE MEJORO SU SALUD Y BIENESTAR FISICO' },
-      { id: 'bien_feliz_seguro', label: 'SE SIENTE MAS FELIZ Y SEGURO GRACIAS AL FUTBOL SALA' },
-      { id: 'bien_calidad_vida', label: 'IMPACTO POSITIVO EN SU CALIDAD DE VIDA' },
-    ],
-  },
-];
+function shouldKeepEvalByKind(ev: any, kind: EvaluacionDIKind): boolean {
+  if (kind === 'all') return true;
+  const isIA = isIADetailEvaluation(ev);
+  return kind === 'ia' ? isIA : !isIA;
+}
+
+function convertEvaluacionesDIToRowsByKind(players: Player[], kind: EvaluacionDIKind): EvaluacionDIExportRow[] {
+  if (kind === 'all') return convertEvaluacionesDIToRows(players);
+  const filteredPlayers = players.map((p: any) => ({
+    ...p,
+    evaluacionesDI: (Array.isArray(p?.evaluacionesDI) ? p.evaluacionesDI : []).filter((ev: any) =>
+      shouldKeepEvalByKind(ev, kind)
+    ),
+  }));
+  return convertEvaluacionesDIToRows(filteredPlayers as Player[]);
+}
 
 function toNum(v: unknown): number | null {
   const n = Number(String(v ?? '').replace(',', '.'));
@@ -845,29 +721,52 @@ function resolveIAScore(player: any): number {
 }
 
 function computeAdjustment(baseScore: number, teamAvg: number): number {
-  // Ajuste suave: mantiene el peso del individuo y solo corrige +/- 0.05 máximo.
   const delta = (baseScore - teamAvg) * 0.1;
   return round2(clampRange(delta, -0.05, 0.05));
 }
 
 function buildIAMatrix(players: Player[]): MatrixData {
   const roster = getRosterPlayers(players);
-  const names = roster.map((p) => getNominal(p) || `Jugador ${roster.indexOf(p) + 1}`);
+  const names = roster.map((p, idx) => getNominal(p) || `Jugador ${idx + 1}`);
   const matrix: MatrixData = [['Pregunta', ...names, 'Resultado valoracion']];
+  const iaRows: Array<{ label: string; key: string }> = [
+    { label: 'Control', key: 'control' },
+    { label: 'Pase', key: 'pase' },
+    { label: 'Lectura de juego', key: 'lecturaJuego' },
+    { label: 'Toma de decision', key: 'tomaDecision' },
+    { label: 'Velocidad', key: 'velocidad' },
+    { label: 'Resistencia', key: 'resistencia' },
+    { label: 'Concentracion', key: 'concentracion' },
+    { label: 'Competitividad', key: 'competitividad' },
+  ];
 
-  IA_MATRIX_ITEMS.forEach((item) => {
-    if (item.type === 'section') {
-      matrix.push([item.label, ...names.map(() => ''), '']);
-      return;
-    }
-    const nums = roster.map((p: any) => toNum(p?.[item.key || '']));
+  matrix.push(['BLOQUE TECNICO', ...names.map(() => ''), '']);
+  iaRows.slice(0, 2).forEach((rowDef) => {
+    const nums = roster.map((p: any) => toNum(p?.[rowDef.key]));
     const rowNums = nums.filter((n): n is number => n != null).map((n) => clampRange(n, 1, 5));
     const rowAvg = avgNumbers(rowNums);
-    matrix.push([
-      item.label,
-      ...nums.map((n) => (n == null ? '' : round2(clampRange(n, 1, 5)))),
-      rowAvg == null ? '' : round2(rowAvg),
-    ]);
+    matrix.push([rowDef.label, ...nums.map((n) => (n == null ? '' : round2(clampRange(n, 1, 5)))), rowAvg == null ? '' : round2(rowAvg)]);
+  });
+  matrix.push(['BLOQUE TACTICO', ...names.map(() => ''), '']);
+  iaRows.slice(2, 4).forEach((rowDef) => {
+    const nums = roster.map((p: any) => toNum(p?.[rowDef.key]));
+    const rowNums = nums.filter((n): n is number => n != null).map((n) => clampRange(n, 1, 5));
+    const rowAvg = avgNumbers(rowNums);
+    matrix.push([rowDef.label, ...nums.map((n) => (n == null ? '' : round2(clampRange(n, 1, 5)))), rowAvg == null ? '' : round2(rowAvg)]);
+  });
+  matrix.push(['BLOQUE FISICO', ...names.map(() => ''), '']);
+  iaRows.slice(4, 6).forEach((rowDef) => {
+    const nums = roster.map((p: any) => toNum(p?.[rowDef.key]));
+    const rowNums = nums.filter((n): n is number => n != null).map((n) => clampRange(n, 1, 5));
+    const rowAvg = avgNumbers(rowNums);
+    matrix.push([rowDef.label, ...nums.map((n) => (n == null ? '' : round2(clampRange(n, 1, 5)))), rowAvg == null ? '' : round2(rowAvg)]);
+  });
+  matrix.push(['BLOQUE MENTAL', ...names.map(() => ''), '']);
+  iaRows.slice(6).forEach((rowDef) => {
+    const nums = roster.map((p: any) => toNum(p?.[rowDef.key]));
+    const rowNums = nums.filter((n): n is number => n != null).map((n) => clampRange(n, 1, 5));
+    const rowAvg = avgNumbers(rowNums);
+    matrix.push([rowDef.label, ...nums.map((n) => (n == null ? '' : round2(clampRange(n, 1, 5)))), rowAvg == null ? '' : round2(rowAvg)]);
   });
 
   const baseScores = roster.map((p) => resolveIAScore(p));
@@ -875,27 +774,10 @@ function buildIAMatrix(players: Player[]): MatrixData {
   const adjustments = baseScores.map((s) => computeAdjustment(s, teamAvg));
   const finalScores = baseScores.map((s, i) => round2(clampRange(s + adjustments[i], 1, 5)));
 
-  matrix.push([
-    'RESULTADO IA BASE (0-5)',
-    ...baseScores.map((s) => round2(s)),
-    teamAvg ? round2(teamAvg) : '',
-  ]);
-  matrix.push([
-    'VALORACION GLOBAL EQUIPO (0-5)',
-    ...baseScores.map(() => (teamAvg ? round2(teamAvg) : '')),
-    teamAvg ? round2(teamAvg) : '',
-  ]);
-  matrix.push([
-    'AJUSTE POR EQUIPO',
-    ...adjustments.map((a) => round2(a)),
-    0,
-  ]);
-  matrix.push([
-    'RESULTADO IA FINAL AJUSTADO (0-5)',
-    ...finalScores.map((s) => round2(s)),
-    teamAvg ? round2(teamAvg) : '',
-  ]);
-
+  matrix.push(['RESULTADO IA BASE (0-5)', ...baseScores.map((s) => round2(s)), teamAvg ? round2(teamAvg) : '']);
+  matrix.push(['VALORACION GLOBAL EQUIPO (0-5)', ...baseScores.map(() => (teamAvg ? round2(teamAvg) : '')), teamAvg ? round2(teamAvg) : '']);
+  matrix.push(['AJUSTE POR EQUIPO', ...adjustments.map((a) => round2(a)), 0]);
+  matrix.push(['RESULTADO IA FINAL AJUSTADO (0-5)', ...finalScores.map((s) => round2(s)), teamAvg ? round2(teamAvg) : '']);
   return matrix;
 }
 
@@ -909,21 +791,24 @@ function getLatestPersonalEval(player: any): any {
 
 function buildPersonalMatrix(players: Player[]): MatrixData {
   const roster = getRosterPlayers(players);
-  const names = roster.map((p) => getNominal(p) || `Jugador ${roster.indexOf(p) + 1}`);
+  const names = roster.map((p, idx) => getNominal(p) || `Jugador ${idx + 1}`);
   const latestByPlayer = roster.map((p) => getLatestPersonalEval(p));
-  const matrix: MatrixData = [['Pregunta', ...names, 'Resultado valoracion']];
+  const allKeys = new Set<string>();
+  latestByPlayer.forEach((ev) => {
+    const answers = ev?.personalForm?.answers;
+    if (answers && typeof answers === 'object') {
+      Object.keys(answers).forEach((k) => allKeys.add(k));
+    }
+  });
 
-  PERSONAL_FORM_MATRIX.forEach((section) => {
-    matrix.push([section.section, ...names.map(() => ''), '']);
-    section.items.forEach((q) => {
-      const values = latestByPlayer.map((ev: any) => String(ev?.personalForm?.answers?.[q.id] ?? '').trim());
-      const numericValues = values
-        .map((v) => toNum(v))
-        .filter((n): n is number => n != null)
-        .map((n) => clampRange(n, 0, 5));
-      const avg = avgNumbers(numericValues);
-      matrix.push([q.label, ...values, avg == null ? '' : round2(avg)]);
-    });
+  const questionKeys = Array.from(allKeys.values()).sort((a, b) => a.localeCompare(b));
+  const matrix: MatrixData = [['Pregunta', ...names, 'Resultado valoracion']];
+  matrix.push(['FORMULARIO PERSONAL', ...names.map(() => ''), '']);
+  questionKeys.forEach((k) => {
+    const values = latestByPlayer.map((ev: any) => String(ev?.personalForm?.answers?.[k] ?? '').trim());
+    const numericValues = values.map((v) => toNum(v)).filter((n): n is number => n != null).map((n) => clampRange(n, 0, 5));
+    const rowAvg = avgNumbers(numericValues);
+    matrix.push([k, ...values, rowAvg == null ? '' : round2(rowAvg)]);
   });
 
   const baseScores = latestByPlayer.map((ev: any) => {
@@ -933,37 +818,18 @@ function buildPersonalMatrix(players: Player[]): MatrixData {
   const baseOnly = baseScores.filter((n): n is number => n != null);
   const teamAvg = avgNumbers(baseOnly) ?? 0;
   const adjustments = baseScores.map((s) => (s == null ? '' : computeAdjustment(s, teamAvg)));
-  const finalScores = baseScores.map((s, idx) =>
-    s == null ? '' : round2(clampRange(s + Number(adjustments[idx] || 0), 1, 5))
-  );
+  const finalScores = baseScores.map((s, idx) => (s == null ? '' : round2(clampRange(s + Number(adjustments[idx] || 0), 1, 5))));
 
-  matrix.push([
-    'RESULTADO PERSONAL BASE (0-5)',
-    ...baseScores.map((s) => (s == null ? '' : round2(s))),
-    teamAvg ? round2(teamAvg) : '',
-  ]);
-  matrix.push([
-    'VALORACION GLOBAL EQUIPO (0-5)',
-    ...baseScores.map((s) => (s == null ? '' : round2(teamAvg))),
-    teamAvg ? round2(teamAvg) : '',
-  ]);
-  matrix.push([
-    'AJUSTE POR EQUIPO',
-    ...adjustments,
-    0,
-  ]);
-  matrix.push([
-    'RESULTADO PERSONAL FINAL AJUSTADO (0-5)',
-    ...finalScores,
-    teamAvg ? round2(teamAvg) : '',
-  ]);
-
+  matrix.push(['RESULTADO PERSONAL BASE (0-5)', ...baseScores.map((s) => (s == null ? '' : round2(s))), teamAvg ? round2(teamAvg) : '']);
+  matrix.push(['VALORACION GLOBAL EQUIPO (0-5)', ...baseScores.map((s) => (s == null ? '' : round2(teamAvg))), teamAvg ? round2(teamAvg) : '']);
+  matrix.push(['AJUSTE POR EQUIPO', ...adjustments, 0]);
+  matrix.push(['RESULTADO PERSONAL FINAL AJUSTADO (0-5)', ...finalScores, teamAvg ? round2(teamAvg) : '']);
   return matrix;
 }
 
 function buildHistoricoEvaluacionesMatrix(players: Player[]): MatrixData {
   const roster = getRosterPlayers(players);
-  const names = roster.map((p) => getNominal(p) || `Jugador ${roster.indexOf(p) + 1}`);
+  const names = roster.map((p, idx) => getNominal(p) || `Jugador ${idx + 1}`);
   const byDateAndPlayer = new Map<string, number>();
   const datesSet = new Set<string>();
 
@@ -984,10 +850,7 @@ function buildHistoricoEvaluacionesMatrix(players: Player[]): MatrixData {
   const matrix: MatrixData = [['Fecha evaluacion', ...names]];
   dates.forEach((fecha) => {
     const row: MatrixCell[] = [fecha];
-    names.forEach((n) => {
-      const v = byDateAndPlayer.get(`${fecha}\u0000${n}`);
-      row.push(v == null ? '' : v);
-    });
+    names.forEach((n) => row.push(byDateAndPlayer.get(`${fecha}\u0000${n}`) ?? ''));
     matrix.push(row);
   });
   return matrix;
@@ -1086,8 +949,17 @@ function rebuildEvalFromSheetRows(evalId: string, evRows: EvaluacionDIExportRow[
   };
 }
 
+function isRootOnlyEvaluationRows(evRows: EvaluacionDIExportRow[]): boolean {
+  return evRows.every(
+    (r) =>
+      !String(r.bloque || '').trim() &&
+      !String(r.subbloque || '').trim() &&
+      !String(r.pregunta || '').trim()
+  );
+}
+
 /** Sustituye evaluacionesDI en cada jugador que tenga filas en el sheet; el resto no cambia. */
-function applyImportedEvaluacionesDIToPlayers(players: Player[], rows: EvaluacionDIExportRow[]): Player[] {
+function applyImportedEvaluacionesDIToPlayers(players: Player[], rows: EvaluacionDIExportRow[], kind: EvaluacionDIKind = 'all'): Player[] {
   if (!Array.isArray(rows) || rows.length === 0) return players;
   const byPlayer = groupEvaluacionDIRows(rows, (r) => String(r.jugador_id || '').trim());
 
@@ -1100,6 +972,9 @@ function applyImportedEvaluacionesDIToPlayers(players: Player[], rows: Evaluacio
     const evals: Record<string, unknown>[] = [];
     for (const [eid, evRows] of byEval) {
       if (!eid) continue;
+      const isRootOnly = isRootOnlyEvaluationRows(evRows as EvaluacionDIExportRow[]);
+      if (kind === 'ia' && isRootOnly) continue;
+      if (kind === 'personal' && !isRootOnly) continue;
       evals.push(rebuildEvalFromSheetRows(eid, evRows));
     }
     evals.sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || '')));
@@ -1264,8 +1139,15 @@ export async function exportEntrenamientosSoloNuevos(
  * Deduplicación por row_id en servidor.
  */
 export async function exportEvaluacionesDI(players: Player[]): Promise<{ success: boolean; message: string; inserted?: number }> {
+  return exportEvaluacionesDIByKind(players, 'all');
+}
+
+async function exportEvaluacionesDIByKind(
+  players: Player[],
+  kind: EvaluacionDIKind
+): Promise<{ success: boolean; message: string; inserted?: number }> {
   try {
-    const rows = convertEvaluacionesDIToRows(players);
+    const rows = convertEvaluacionesDIToRowsByKind(players, kind);
     if (!rows.length) return { success: true, message: 'Sin evaluaciones D.I. para exportar', inserted: 0 };
 
     const parsed = await postGoogleScript({
@@ -1284,37 +1166,31 @@ export async function exportEvaluacionesDI(players: Player[]): Promise<{ success
   }
 }
 
-/**
- * Exporta una matriz de preguntas/respuestas D.I. a Evaluacion_DI_Matriz.
- * Estructura: fila 1 jugadores, columna A preguntas.
- */
-export async function exportEvaluacionesDIMatriz(
-  players: Player[]
-): Promise<{ success: boolean; message: string; rows?: number; players?: number }> {
-  const views = await exportEvaluacionesDIViews(players);
-  if (!views.success) return { success: false, message: views.message };
-  return {
-    success: true,
-    message: views.message,
-    rows: views.iaRows,
-    players: views.players,
-  };
+export async function exportEvaluacionesDIIA(players: Player[]): Promise<{ success: boolean; message: string; inserted?: number }> {
+  return exportEvaluacionesDIByKind(players, 'ia');
 }
 
-export async function exportEvaluacionesDIViews(
-  players: Player[]
+export async function exportEvaluacionesDIPersonal(players: Player[]): Promise<{ success: boolean; message: string; inserted?: number }> {
+  return exportEvaluacionesDIByKind(players, 'personal');
+}
+
+async function exportEvaluacionesDIViewsByKind(
+  players: Player[],
+  kind: 'ia' | 'personal' | 'all'
 ): Promise<{ success: boolean; message: string; iaRows?: number; personalRows?: number; players?: number }> {
   try {
-    const iaMatrix = buildIAMatrix(players);
-    const personalMatrix = buildPersonalMatrix(players);
-    const historicoMatrix = buildHistoricoEvaluacionesMatrix(players);
-    const parsed = await postGoogleScript({
+    const body: Record<string, unknown> = {
       action: 'exportEvaluacionesDIViews',
       spreadsheetId: await getSpreadsheetId(),
-      iaMatrix,
-      personalMatrix,
-      historicoMatrix,
-    });
+      updateIA: kind !== 'personal',
+      updatePersonal: kind !== 'ia',
+      updateHistorico: true,
+      historicoMatrix: buildHistoricoEvaluacionesMatrix(players),
+    };
+    if (kind !== 'personal') body.iaMatrix = buildIAMatrix(players);
+    if (kind !== 'ia') body.personalMatrix = buildPersonalMatrix(players);
+
+    const parsed = await postGoogleScript(body);
     if (!parsed.ok) return { success: false, message: parsed.message };
     const result = parsed.data;
     if (result.success) {
@@ -1332,10 +1208,40 @@ export async function exportEvaluacionesDIViews(
   }
 }
 
+export async function exportEvaluacionesDIViews(
+  players: Player[]
+): Promise<{ success: boolean; message: string; iaRows?: number; personalRows?: number; players?: number }> {
+  return exportEvaluacionesDIViewsByKind(players, 'all');
+}
+
+export async function exportEvaluacionesDIViewsIA(
+  players: Player[]
+): Promise<{ success: boolean; message: string; iaRows?: number; personalRows?: number; players?: number }> {
+  return exportEvaluacionesDIViewsByKind(players, 'ia');
+}
+
+export async function exportEvaluacionesDIViewsPersonal(
+  players: Player[]
+): Promise<{ success: boolean; message: string; iaRows?: number; personalRows?: number; players?: number }> {
+  return exportEvaluacionesDIViewsByKind(players, 'personal');
+}
+
 /**
  * Importa la hoja Evaluacion_DI y fusiona en la plantilla actual (solo jugadores con filas en el sheet).
  */
 export async function importEvaluacionesDI(players: Player[]): Promise<{
+  success: boolean;
+  data?: Player[];
+  message: string;
+  jugadoresActualizados?: number;
+}> {
+  return importEvaluacionesDIByKind(players, 'all');
+}
+
+async function importEvaluacionesDIByKind(
+  players: Player[],
+  kind: EvaluacionDIKind
+): Promise<{
   success: boolean;
   data?: Player[];
   message: string;
@@ -1362,7 +1268,7 @@ export async function importEvaluacionesDI(players: Player[]): Promise<{
     }
     const rows = raw as EvaluacionDIExportRow[];
     const sheetJugadorIds = new Set(rows.map((r) => String(r.jugador_id || '').trim()).filter(Boolean));
-    const merged = applyImportedEvaluacionesDIToPlayers(players, rows);
+    const merged = applyImportedEvaluacionesDIToPlayers(players, rows, kind);
     const actualizados = players.filter((p) => sheetJugadorIds.has(String(p.id || '').trim())).length;
     return {
       success: true,
@@ -1373,6 +1279,14 @@ export async function importEvaluacionesDI(players: Player[]): Promise<{
   } catch (error) {
     return { success: false, message: `Error de conexión: ${(error as Error).message}` };
   }
+}
+
+export async function importEvaluacionesDIIA(players: Player[]) {
+  return importEvaluacionesDIByKind(players, 'ia');
+}
+
+export async function importEvaluacionesDIPersonal(players: Player[]) {
+  return importEvaluacionesDIByKind(players, 'personal');
 }
 
 // ============================================================================
