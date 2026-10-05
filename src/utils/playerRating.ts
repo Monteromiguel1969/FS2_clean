@@ -1,4 +1,4 @@
-type BlockName = 'technique' | 'tactic' | 'physical' | 'mental';
+import { findRosterEntry } from './playerIdentity';
 type BlockWeights = Record<BlockName, number>;
 type RatingContext = { partidos?: any[]; entrenos?: any[] };
 type EvalDI = {
@@ -55,6 +55,11 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+function toTenScale(value: number, allowZero = false): number {
+  const scaled = value <= 5 ? value * 2 : value;
+  return clamp(scaled, allowZero ? 0 : 1, 10);
+}
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -68,7 +73,7 @@ function extractRatings(player: any, keys: string[]): number[] {
   return keys
     .map((k) => toNumber(player?.[k]))
     .filter((v): v is number => v != null)
-    .map((v) => clamp(v, 1, 5));
+    .map((v) => toTenScale(v));
 }
 
 function normalizePosition(raw: any): string {
@@ -122,7 +127,7 @@ function resolveBlockValue(player: any, block: BlockName): number {
   }
 
   const staff = toNumber(player?.valoracionStaff);
-  return clamp(staff ?? 3, 1, 5);
+  return toTenScale(staff ?? 6);
 }
 
 function resolveWeights(player: any): BlockWeights {
@@ -162,16 +167,15 @@ export function explainValoracionIA(player: any, context: RatingContext = {}): {
     blocks.tactic * weights.tactic +
     blocks.physical * weights.physical +
     blocks.mental * weights.mental;
-  const skillsScore = clamp(weighted, 1, 5);
-  const staffScore = clamp(toNumber(player?.valoracionStaff) ?? 3, 1, 5);
+  const skillsScore = clamp(weighted, 1, 10);
+  const staffScore = toTenScale(toNumber(player?.valoracionStaff) ?? 6);
 
-  const playerId = String(player?.id || '');
   const partidos = Array.isArray(context?.partidos) ? context.partidos : [];
   const entrenos = Array.isArray(context?.entrenos) ? context.entrenos : [];
 
   const totalEntrenos = entrenos.length;
   const entrenosAs = entrenos.reduce((acc, e: any) => {
-    const st = (e?.asistencia || []).find((a: any) => String(a?.id) === playerId);
+    const st = findRosterEntry(e?.asistencia, player);
     return acc + (st?.estado === 'AS' ? 1 : 0);
   }, 0);
   const entrenosPct = totalEntrenos > 0 ? entrenosAs / totalEntrenos : 0.5;
@@ -182,7 +186,7 @@ export function explainValoracionIA(player: any, context: RatingContext = {}): {
   let gf = 0;
   let gc = 0;
   partidos.forEach((pa: any) => {
-    const reg = (pa?.convocatoria || []).find((c: any) => String(c?.id) === playerId);
+    const reg = findRosterEntry(pa?.convocatoria, player);
     if (reg?.estado === 'AS') {
       partidosAs += 1;
       goles += Number(reg?.goles || 0);
@@ -200,15 +204,15 @@ export function explainValoracionIA(player: any, context: RatingContext = {}): {
   const favorContraPct = (gf + gc) > 0 ? gf / (gf + gc) : 0.5;
   const evals: EvalDI[] = Array.isArray(player?.evaluacionesDI) ? player.evaluacionesDI : [];
   const evalScored = evals
-    .map((e) => clamp(Number(e?.score || 0), 1, 5))
+    .map((e) => toTenScale(Number(e?.score || 0), true))
     .filter((n) => Number.isFinite(n) && n > 0);
   const evaluacionDIScore = evalScored.length ? avg(evalScored) : null;
   const contextParts = [entrenosPct, partidosPct, golesNorm, minutosNorm, favorContraPct];
-  if (evaluacionDIScore != null) contextParts.push((evaluacionDIScore - 1) / 4);
+  if (evaluacionDIScore != null) contextParts.push(evaluacionDIScore / 10);
   const contextNorm = avg(contextParts);
-  const contextScore = clamp(1 + 4 * contextNorm, 1, 5);
+  const contextScore = clamp(10 * contextNorm, 0, 10);
   const hasPersonal = evaluacionDIScore != null;
-  const personalScore = hasPersonal ? clamp(evaluacionDIScore, 1, 5) : 0;
+  const personalScore = hasPersonal ? clamp(evaluacionDIScore, 0, 10) : 0;
 
   // Cuando hay formulario personal: 45% IA + 15% Staff + 20% Personal + 20% Contexto
   // Sin formulario personal: el 20% se reparte proporcionalmente → 56.25% IA + 18.75% Staff + 25% Contexto
@@ -223,7 +227,7 @@ export function explainValoracionIA(player: any, context: RatingContext = {}): {
     personalScore * wPersonal +
     contextScore * wContext
   );
-  const score = clamp(Math.round(rawScore), 1, 5);
+  const score = clamp(Math.round(rawScore), 0, 10);
 
   const pctSkills = Math.round(wSkills * 100);
   const pctStaff = Math.round(wStaff * 100);
@@ -300,7 +304,7 @@ export function getIATrend(player: any): { delta: number; label: string } {
 }
 
 export function normalizePlayerRatings(player: any, previousPlayer?: any, context: RatingContext = {}): any {
-  const staff = clamp(Math.round(toNumber(player?.valoracionStaff) ?? 3), 1, 5);
+  const staff = clamp(Math.round(toTenScale(toNumber(player?.valoracionStaff) ?? 6)), 1, 10);
   const explain = explainValoracionIA({ ...player, valoracionStaff: staff }, context);
   const ia = explain.score;
   const priorHistory = previousPlayer?.iaHistory ?? player?.iaHistory;
@@ -313,8 +317,13 @@ export function normalizePlayerRatings(player: any, previousPlayer?: any, contex
   };
 }
 
-export function getPlayerCompositeScore(player: any): number {
-  const staff = clamp(Math.round(toNumber(player?.valoracionStaff) ?? 3), 1, 5);
-  const ia = clamp(Math.round(toNumber(player?.valoracionIA) ?? calculateValoracionIA(player)), 1, 5);
-  return staff * 10 + ia * 6;
+export function getPlayerCompositeScore(
+  player: any,
+  weights: { staff?: number; ia?: number } = {}
+): number {
+  const staff = clamp(Math.round(toTenScale(toNumber(player?.valoracionStaff) ?? 6)), 1, 10);
+  const ia = clamp(Math.round(toTenScale(toNumber(player?.valoracionIA) ?? calculateValoracionIA(player))), 0, 10);
+  const wStaff = Number.isFinite(weights.staff as number) ? (weights.staff as number) : 1;
+  const wIa = Number.isFinite(weights.ia as number) ? (weights.ia as number) : 1;
+  return staff * wStaff + ia * wIa;
 }

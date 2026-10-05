@@ -5,14 +5,21 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { keysFor, buildLegacyStorageKey, CONFIG_LISTA_EQUIPOS, CONFIG_FIRST_RUN_DONE, CONFIG_STORAGE_MODE } from './storageKeys';
+import { notifyUserAppDataChanged } from './userCloudSync';
+import { getActiveFirebaseUid, scopedAccountStorageKey } from '../services/firebaseUserDataService';
+import { LEGACY_LISTA_EQUIPOS } from './accountStorageScope';
 
-const LEGACY_LISTA_EQUIPOS = '@config_lista_equipos_v3';
+const LEGACY_LISTA_EQUIPOS_GLOBAL = LEGACY_LISTA_EQUIPOS;
 
 export interface StoredData {
   players: unknown[];
   partidos: unknown[];
   entrenos: unknown[];
   eventosCalendario: unknown[];
+}
+
+export interface TeamSettings {
+  escudoUri?: string | null;
 }
 
 const CURRENT_DATA_VERSION = 1;
@@ -178,39 +185,207 @@ export async function hasLocalData(equipo: string, temporada: string): Promise<b
 /**
  * Lista de equipos guardada (compatibilidad con SelectorEquipo).
  */
-export async function getListaEquipos(): Promise<Array<{ id: number; nombre: string; temporada: string }>> {
+export async function getListaEquipos(forUid?: string | null): Promise<Array<{ id: number; nombre: string; temporada: string }>> {
   try {
-    let json = await AsyncStorage.getItem(CONFIG_LISTA_EQUIPOS);
-    if (!json) json = await AsyncStorage.getItem(LEGACY_LISTA_EQUIPOS);
-    if (!json) return [{ id: 1, nombre: 'Leganés Amas B', temporada: '2025-26' }];
+    const uid = forUid !== undefined ? forUid : getActiveFirebaseUid();
+    const scopedKey = scopedAccountStorageKey(CONFIG_LISTA_EQUIPOS, uid);
+    let json = await AsyncStorage.getItem(scopedKey);
+    if (!json && !uid) {
+      json = await AsyncStorage.getItem(LEGACY_LISTA_EQUIPOS_GLOBAL);
+      if (!json) json = await AsyncStorage.getItem(CONFIG_LISTA_EQUIPOS);
+    }
+    if (!json) return [];
     const arr = JSON.parse(json);
     return Array.isArray(arr) ? arr : [];
   } catch {
-    return [{ id: 1, nombre: 'Leganés Amas B', temporada: '2025-26' }];
+    return [];
   }
 }
 
-export async function setListaEquipos(lista: Array<{ id: number; nombre: string; temporada: string }>): Promise<void> {
-  await AsyncStorage.setItem(CONFIG_LISTA_EQUIPOS, JSON.stringify(lista));
-  await AsyncStorage.setItem(LEGACY_LISTA_EQUIPOS, JSON.stringify(lista));
+export async function setListaEquipos(
+  lista: Array<{ id: number; nombre: string; temporada: string }>,
+  forUid?: string | null
+): Promise<void> {
+  const uid = forUid !== undefined ? forUid : getActiveFirebaseUid();
+  const scopedKey = scopedAccountStorageKey(CONFIG_LISTA_EQUIPOS, uid);
+  await AsyncStorage.setItem(scopedKey, JSON.stringify(lista));
+  await AsyncStorage.setItem(scopedAccountStorageKey(LEGACY_LISTA_EQUIPOS_GLOBAL, uid), JSON.stringify(lista));
+  notifyUserAppDataChanged();
 }
 
 export type StorageMode = 'local' | 'cloud' | 'both';
 
-export async function getStorageMode(): Promise<StorageMode> {
-  const v = await AsyncStorage.getItem(CONFIG_STORAGE_MODE);
+export async function getStorageMode(forUid?: string | null): Promise<StorageMode> {
+  const uid = forUid !== undefined ? forUid : getActiveFirebaseUid();
+  const v = await AsyncStorage.getItem(scopedAccountStorageKey(CONFIG_STORAGE_MODE, uid));
   if (v === 'cloud' || v === 'both') return v;
   return 'local';
 }
 
 export async function setStorageMode(mode: StorageMode): Promise<void> {
-  await AsyncStorage.setItem(CONFIG_STORAGE_MODE, mode);
+  const uid = getActiveFirebaseUid();
+  await AsyncStorage.setItem(scopedAccountStorageKey(CONFIG_STORAGE_MODE, uid), mode);
+  notifyUserAppDataChanged();
 }
 
-export async function getFirstRunDone(): Promise<boolean> {
-  return (await AsyncStorage.getItem(CONFIG_FIRST_RUN_DONE)) === '1';
+export async function getFirstRunDone(forUid?: string | null): Promise<boolean> {
+  const uid = forUid !== undefined ? forUid : getActiveFirebaseUid();
+  return (await AsyncStorage.getItem(scopedAccountStorageKey(CONFIG_FIRST_RUN_DONE, uid))) === '1';
 }
 
-export async function setFirstRunDone(): Promise<void> {
-  await AsyncStorage.setItem(CONFIG_FIRST_RUN_DONE, '1');
+export async function setFirstRunDone(forUid?: string | null): Promise<void> {
+  const uid = forUid !== undefined ? forUid : getActiveFirebaseUid();
+  await AsyncStorage.setItem(scopedAccountStorageKey(CONFIG_FIRST_RUN_DONE, uid), '1');
+  notifyUserAppDataChanged();
+}
+
+export async function getTeamSettings(equipo: string, temporada: string): Promise<TeamSettings> {
+  const k = keysFor(equipo, temporada);
+  try {
+    const raw = await AsyncStorage.getItem(`${k.base}:team_settings`);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    return {
+      escudoUri: typeof parsed.escudoUri === 'string' ? parsed.escudoUri : null,
+    };
+  } catch {
+    return {};
+  }
+}
+
+export async function setTeamSettings(equipo: string, temporada: string, settings: TeamSettings): Promise<void> {
+  const k = keysFor(equipo, temporada);
+  const safe: TeamSettings = {
+    escudoUri: settings?.escudoUri ? String(settings.escudoUri) : null,
+  };
+  await AsyncStorage.setItem(`${k.base}:team_settings`, JSON.stringify(safe));
+}
+
+/** ISO de la última sincronización Sheet exitosa (por equipo+temporada). */
+export async function getLastSuccessfulSyncAt(equipo: string, temporada: string): Promise<string | null> {
+  const k = keysFor(equipo, temporada);
+  try {
+    const raw = await AsyncStorage.getItem(`${k.base}:last_sheet_sync_at`);
+    const v = String(raw || '').trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setLastSuccessfulSyncAt(
+  equipo: string,
+  temporada: string,
+  iso?: string | null
+): Promise<void> {
+  const k = keysFor(equipo, temporada);
+  const value = String(iso || new Date().toISOString()).trim();
+  await AsyncStorage.setItem(`${k.base}:last_sheet_sync_at`, value);
+}
+
+export interface BibliotecaImage {
+  id: string;
+  uri: string;
+  /** Etiqueta libre asignada por el usuario para encontrarla rápidamente. */
+  titulo: string;
+  /** ISO timestamp para ordenación por antigüedad. */
+  createdAt: string;
+}
+
+export interface BibliotecaNote {
+  id: string;
+  titulo: string;
+  texto: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BibliotecaContents {
+  imagenes: BibliotecaImage[];
+  notas: BibliotecaNote[];
+}
+
+const EMPTY_BIBLIOTECA: BibliotecaContents = { imagenes: [], notas: [] };
+
+function bibliotecaKey(equipo: string, temporada: string): string {
+  const k = keysFor(equipo, temporada);
+  return `${k.base}:biblioteca`;
+}
+
+export async function loadBiblioteca(equipo: string, temporada: string): Promise<BibliotecaContents> {
+  try {
+    const raw = await AsyncStorage.getItem(bibliotecaKey(equipo, temporada));
+    if (!raw) return { ...EMPTY_BIBLIOTECA };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return { ...EMPTY_BIBLIOTECA };
+    return {
+      imagenes: Array.isArray(parsed.imagenes) ? parsed.imagenes : [],
+      notas: Array.isArray(parsed.notas) ? parsed.notas : [],
+    };
+  } catch {
+    return { ...EMPTY_BIBLIOTECA };
+  }
+}
+
+export async function saveBiblioteca(equipo: string, temporada: string, contents: BibliotecaContents): Promise<void> {
+  const safe: BibliotecaContents = {
+    imagenes: Array.isArray(contents?.imagenes) ? contents.imagenes : [],
+    notas: Array.isArray(contents?.notas) ? contents.notas : [],
+  };
+  await AsyncStorage.setItem(bibliotecaKey(equipo, temporada), JSON.stringify(safe));
+}
+
+export type HistorialCronometroSession = {
+  id: string;
+  rival?: string;
+  fecha?: string;
+  goles?: { favor?: number; contra?: number; eventos?: unknown[] };
+  tiempos?: Record<string, number[]>;
+  extraTimeSeconds?: number;
+};
+
+export async function loadHistorialPartidos(equipo: string, temporada: string): Promise<HistorialCronometroSession[]> {
+  try {
+    const k = keysFor(equipo, temporada);
+    const raw = await AsyncStorage.getItem(k.historialPartidos);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveHistorialPartidos(
+  equipo: string,
+  temporada: string,
+  historial: HistorialCronometroSession[]
+): Promise<void> {
+  const k = keysFor(equipo, temporada);
+  const safe = Array.isArray(historial) ? historial : [];
+  await AsyncStorage.setItem(k.historialPartidos, JSON.stringify(safe));
+}
+
+/** Elimina todos los datos locales de un equipo/temporada (plantilla, partidos, config, etc.). */
+export async function deleteEquipoTemporadaData(equipo: string, temporada: string): Promise<void> {
+  const k = keysFor(equipo, temporada);
+  const legacyBase = buildLegacyStorageKey(equipo, temporada);
+  const keysToRemove = [
+    k.players,
+    k.partidos,
+    k.entrenos,
+    k.eventosCalendario,
+    k.version,
+    k.historialPartidos,
+    `${k.base}:team_settings`,
+    `${k.base}:biblioteca`,
+    `${legacyBase}:players`,
+    `${legacyBase}:partidos`,
+    `${legacyBase}:entrenos`,
+    `${legacyBase}:eventos_calendario`,
+    `${legacyBase}:team_settings`,
+    `${legacyBase}:biblioteca`,
+  ];
+  await AsyncStorage.multiRemove(keysToRemove);
 }

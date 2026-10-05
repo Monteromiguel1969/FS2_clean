@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,16 @@ import * as Calendar from 'expo-calendar';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { importPartidos } from '../services/googleSheetsService';
+import {
+  DEFAULT_REMINDER_HOURS,
+  REMINDER_OFFSET_OPTIONS,
+  cancelEventReminder,
+  rescheduleAllCalendarReminders,
+  scheduleEventReminder,
+} from '../services/calendarRemindersService';
+import { useScreenMetrics } from '../utils/useScreenMetrics';
+import { dateToYmd, isValidYmd } from '../utils/dateFormat';
+import { YmdDatePickerField } from './YmdDatePickerField';
 
 // -----------------------------------------------------------------------------
 // TIPOS
@@ -71,6 +81,10 @@ export interface EventoCalendarioStored {
   ubicacionMaps: string;
   ubicacion: string;
   notas: string;
+  /** Si false, no se programa notificación local. Por defecto activo. */
+  recordatorioActivo?: boolean;
+  /** Horas antes del inicio del evento. */
+  recordatorioHorasAntes?: number;
 }
 
 interface PlayerBasic {
@@ -101,6 +115,7 @@ interface CalendarioProps {
   onBack: () => void;
   onVerPartido?: (id: string) => void;
   onVerEntreno?: (id: string) => void;
+  onOpenBiblioteca?: () => void;
 }
 
 // -----------------------------------------------------------------------------
@@ -134,6 +149,19 @@ function extractHora(fechaStr: string | undefined): string {
     if (t) return t.slice(0, 5);
   }
   return '--';
+}
+
+/** HH:MM comparable; sin hora va al final de ese día. */
+function horaSortKey(hora: string | undefined): string {
+  const m = String(hora || '').trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return '99:99';
+  return `${m[1].padStart(2, '0')}:${m[2]}`;
+}
+
+function compareMatchesChronological(a: MatchItem, b: MatchItem): number {
+  const byDate = parseDateKey(a.fecha).localeCompare(parseDateKey(b.fecha));
+  if (byDate !== 0) return byDate;
+  return horaSortKey(a.hora).localeCompare(horaSortKey(b.hora));
 }
 
 function normalizeToMatch(p: PartidoFromApp): MatchItem {
@@ -206,6 +234,105 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+const MONTH_NAMES_PDF = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
+function ymFromYmd(ymd: string): { y: number; m: number } {
+  const parts = String(ymd || '').trim().split('-');
+  const y = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) {
+    const d = new Date();
+    return { y: d.getFullYear(), m: d.getMonth() + 1 };
+  }
+  return { y, m };
+}
+
+/** Meses calendario desde el mes de `desde` hasta el de `hasta` (inclusive), ambos YYYY-MM-DD. */
+function iterateMonthsInclusive(start: { y: number; m: number }, end: { y: number; m: number }): { y: number; m: number }[] {
+  const out: { y: number; m: number }[] = [];
+  let cy = start.y;
+  let cm = start.m;
+  while (cy < end.y || (cy === end.y && cm <= end.m)) {
+    out.push({ y: cy, m: cm });
+    cm += 1;
+    if (cm > 12) {
+      cm = 1;
+      cy += 1;
+    }
+  }
+  return out;
+}
+
+/** Una rejilla mensual en HTML; solo lista partidos/eventos cuya fecha cae en [rangeDesde, rangeHasta]. */
+function buildSingleMonthCalendarPdfHtml(
+  y: number,
+  m: number,
+  matches: MatchItem[],
+  rangeDesde: string,
+  rangeHasta: string
+): string {
+  const monthLabel = MONTH_NAMES_PDF[(m || 1) - 1];
+  const first = new Date(y, (m || 1) - 1, 1);
+  const last = new Date(y, m || 1, 0);
+  const startDow = first.getDay();
+  const daysInMonth = last.getDate();
+  const weekDays = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  const prefix = `${y}-${String(m).padStart(2, '0')}-`;
+  const monthMatches = matches.filter((mm) => {
+    const key = parseDateKey(mm.fecha);
+    return key.startsWith(prefix) && key >= rangeDesde && key <= rangeHasta;
+  });
+  const matchesByDay: Record<number, MatchItem[]> = {};
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${prefix}${String(d).padStart(2, '0')}`;
+    matchesByDay[d] = monthMatches.filter((mm) => parseDateKey(mm.fecha) === key);
+  }
+  const cells: string[] = [];
+  for (let i = 0; i < startDow; i++) cells.push('<td></td>');
+  for (let d = 1; d <= daysInMonth; d++) {
+    const list = (matchesByDay[d] || [])
+      .map((mm) => {
+        if (mm.isEvento) {
+          const tipo = mm.tipo || 'Otro';
+          if (tipo === 'Partido') {
+            const parts = [
+              `• ⚽ [Partido]`,
+              `🕒 ${mm.hora || '--'}`,
+              `🏆 ${mm.tipoCompeticion || '—'}`,
+              `🆚 ${mm.rival || '—'}`,
+              `📍 ${mm.lugar || '—'}`,
+              `📌 ${mm.lugarQuedada || '—'}`,
+              `🕘 ${mm.horaQuedada || '--'}`,
+              `👕 ${mm.equipacion || '—'}`,
+              `📝 ${mm.observaciones || '—'}`,
+            ];
+            if (mm.ubicacionMaps) parts.push(`🗺 ${mm.ubicacionMaps}`);
+            return parts.join(' | ');
+          }
+          if (tipo === 'Entrenamiento') {
+            return `• 🏃 [Entrenamiento] 🕒 ${mm.hora || '--'} | ⏱ ${mm.horaFin || '--'} | 📝 ${mm.observaciones || '—'}`;
+          }
+          return `• 📌 [Otro] 🕒 ${mm.hora || '--'} | ⏱ ${mm.horaFin || '--'} | 📝 ${mm.descripcion || '—'}`;
+        }
+        const resultado = mm.estado === 'jugado' ? `${mm.golesFavor}-${mm.golesContra}` : 'Pendiente';
+        return `• [Partido] ${mm.hora || '--'} | vs ${mm.rival} | ${mm.lugar} | ${mm.tipo} | ${resultado}`;
+      })
+      .map((line) => escapeHtml(line))
+      .join('<br/>');
+    cells.push(`<td style="border:1px solid #ccc; padding:4px; vertical-align:top; font-size:10px;"><strong>${d}</strong><br/>${list || '—'}</td>`);
+    if ((startDow + d) % 7 === 0) cells.push('</tr><tr>');
+  }
+  return `
+    <div>
+      <h2 style="color:#012E57;">${escapeHtml(monthLabel)} ${y}</h2>
+      <table><thead><tr>${weekDays.map((w) => `<th>${w}</th>`).join('')}</tr></thead>
+      <tbody><tr>${cells.join('')}</tr></tbody></table>
+    </div>`;
+}
+
 function useMatches(
   partidos: PartidoFromApp[],
   setPartidos: CalendarioProps['setPartidos'],
@@ -222,8 +349,7 @@ function useMatches(
     const fromEventos = Array.isArray(eventosCalendario)
       ? eventosCalendario.map(eventoToMatch)
       : [];
-    return [...fromPartidos, ...fromEventos]
-      .sort((a, b) => parseDateKey(b.fecha).localeCompare(parseDateKey(a.fecha)));
+    return [...fromPartidos, ...fromEventos].sort(compareMatchesChronological);
   }, [partidos, eventosCalendario]);
 
   const syncFromSheets = useCallback(async () => {
@@ -319,6 +445,10 @@ export interface EventFormData {
   observaciones: string;
   descripcion: string;
   ubicacionMaps: string;
+  /** Sólo para 'Entrenamiento': repeticiones adicionales en estas fechas (yyyy-mm-dd). */
+  extraDates?: string[];
+  recordatorioActivo?: boolean;
+  recordatorioHorasAntes?: number;
 }
 
 function parseTimeToMinutes(t: string): number {
@@ -523,6 +653,9 @@ const defaultEventForm = (dateKey: string, match: MatchItem | null): EventFormDa
   observaciones: match?.observaciones || '',
   descripcion: '',
   ubicacionMaps: match?.ubicacionMaps || '',
+  extraDates: [],
+  recordatorioActivo: true,
+  recordatorioHorasAntes: DEFAULT_REMINDER_HOURS,
 });
 
 function EventModal({
@@ -551,6 +684,10 @@ function EventModal({
   const [observaciones, setObservaciones] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [ubicacionMaps, setUbicacionMaps] = useState('');
+  const [extraDates, setExtraDates] = useState<string[]>([]);
+  const [extraDateDraft, setExtraDateDraft] = useState<string>('');
+  const [recordatorioActivo, setRecordatorioActivo] = useState(true);
+  const [recordatorioHorasAntes, setRecordatorioHorasAntes] = useState(DEFAULT_REMINDER_HOURS);
 
   React.useEffect(() => {
     if (form) {
@@ -567,8 +704,28 @@ function EventModal({
       setObservaciones(form.observaciones);
       setDescripcion(form.descripcion || '');
       setUbicacionMaps(form.ubicacionMaps);
+      setExtraDates(Array.isArray(form.extraDates) ? form.extraDates : []);
+      setExtraDateDraft('');
+      setRecordatorioActivo(form.recordatorioActivo !== false);
+      setRecordatorioHorasAntes(
+        Number.isFinite(Number(form.recordatorioHorasAntes)) && Number(form.recordatorioHorasAntes) > 0
+          ? Number(form.recordatorioHorasAntes)
+          : DEFAULT_REMINDER_HOURS
+      );
     }
   }, [form]);
+
+  const addExtraDate = useCallback(() => {
+    const ymd = parseDateKey(extraDateDraft);
+    if (!ymd) return;
+    if (ymd === dateKey) return;
+    if (extraDates.includes(ymd)) return;
+    setExtraDates((prev) => [...prev, ymd].sort());
+  }, [extraDateDraft, dateKey, extraDates]);
+
+  const removeExtraDate = useCallback((d: string) => {
+    setExtraDates((prev) => prev.filter((x) => x !== d));
+  }, []);
 
   const handleSave = useCallback(() => {
     if (!form) return;
@@ -587,8 +744,11 @@ function EventModal({
       observaciones: observaciones.trim(),
       descripcion: descripcion.trim(),
       ubicacionMaps: ubicacionMaps.trim(),
+      extraDates: tipoEvento === 'Entrenamiento' ? extraDates : [],
+      recordatorioActivo,
+      recordatorioHorasAntes,
     });
-  }, [form, tipoEvento, tipoCompeticion, rival, dateKey, horaInicio, horaFin, horaQuedada, equipacion, lugarPartido, lugarQuedada, observaciones, descripcion, ubicacionMaps, onSave]);
+  }, [form, tipoEvento, tipoCompeticion, rival, dateKey, horaInicio, horaFin, horaQuedada, equipacion, lugarPartido, lugarQuedada, observaciones, descripcion, ubicacionMaps, extraDates, recordatorioActivo, recordatorioHorasAntes, onSave]);
 
   if (!form) return null;
 
@@ -617,15 +777,15 @@ function EventModal({
               })}
             </View>
 
-            <Text style={styles.modalLabel}>📅 Fecha (YYYY-MM-DD)</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={dateKey}
-              onChangeText={setDateKey}
-              placeholder="2026-03-18"
-              placeholderTextColor="#666"
-              autoCapitalize="none"
-            />
+            <Text style={styles.modalLabel}>📅 Fecha</Text>
+            <View style={styles.modalDateRow}>
+              <YmdDatePickerField
+                value={dateKey}
+                onChange={setDateKey}
+                variant="light"
+                narrow={false}
+              />
+            </View>
 
             {tipoEvento === 'Partido' && (
               <>
@@ -737,6 +897,35 @@ function EventModal({
                   placeholderTextColor="#666"
                   multiline
                 />
+                <Text style={styles.modalLabel}>🔁 Repetir en otras fechas (entrenamientos adicionales)</Text>
+                <View style={styles.extraDateRow}>
+                  <YmdDatePickerField
+                    value={extraDateDraft || dateKey}
+                    onChange={setExtraDateDraft}
+                    minimumDate={dateKey}
+                    variant="light"
+                    narrow={false}
+                  />
+                  <TouchableOpacity style={styles.extraDateAddBtn} onPress={addExtraDate}>
+                    <Text style={styles.extraDateAddTxt}>+ AÑADIR</Text>
+                  </TouchableOpacity>
+                </View>
+                {extraDates.length > 0 ? (
+                  <View style={styles.extraDateChipsWrap}>
+                    {extraDates.map((d) => (
+                      <View key={d} style={styles.extraDateChip}>
+                        <Text style={styles.extraDateChipTxt}>{formatDateLabel(d)}</Text>
+                        <TouchableOpacity onPress={() => removeExtraDate(d)} style={styles.extraDateChipClose}>
+                          <Text style={styles.extraDateChipCloseTxt}>×</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.extraDateHint}>
+                    Selecciona una fecha y pulsa "AÑADIR" para crear el mismo entrenamiento en varios días.
+                  </Text>
+                )}
               </>
             )}
 
@@ -771,6 +960,44 @@ function EventModal({
                 />
               </>
             )}
+
+            <Text style={styles.modalLabel}>🔔 Recordatorio en el móvil</Text>
+            <View style={styles.reminderToggleRow}>
+              <TouchableOpacity
+                style={[styles.reminderToggleBtn, recordatorioActivo && styles.reminderToggleBtnOn]}
+                onPress={() => setRecordatorioActivo(true)}
+              >
+                <Text style={[styles.reminderToggleTxt, recordatorioActivo && styles.reminderToggleTxtOn]}>ON</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.reminderToggleBtn, !recordatorioActivo && styles.reminderToggleBtnOff]}
+                onPress={() => setRecordatorioActivo(false)}
+              >
+                <Text style={[styles.reminderToggleTxt, !recordatorioActivo && styles.reminderToggleTxtOn]}>OFF</Text>
+              </TouchableOpacity>
+            </View>
+            {recordatorioActivo ? (
+              <>
+                <Text style={styles.modalLabel}>Avisar antes</Text>
+                <View style={styles.reminderChipsRow}>
+                  {REMINDER_OFFSET_OPTIONS.map((opt) => {
+                    const on = recordatorioHorasAntes === opt.hours;
+                    return (
+                      <TouchableOpacity
+                        key={opt.hours}
+                        style={[styles.reminderChip, on && styles.reminderChipOn]}
+                        onPress={() => setRecordatorioHorasAntes(opt.hours)}
+                      >
+                        <Text style={[styles.reminderChipTxt, on && styles.reminderChipTxtOn]}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={styles.reminderHint}>
+                  Notificación local del móvil. Si el aviso ya habría pasado, no se programa.
+                </Text>
+              </>
+            ) : null}
           </ScrollView>
           <View style={styles.modalButtons}>
             <TouchableOpacity style={[styles.modalBtnCancel, styles.modalBtnHalf]} onPress={onClose}>
@@ -834,22 +1061,25 @@ function ExportModal({
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <Text style={styles.modalTitle}>Exportar calendario</Text>
-          <Text style={styles.modalLabel}>Fecha desde (YYYY-MM-DD)</Text>
-          <TextInput
-            style={styles.modalInput}
-            value={filterDesde}
-            onChangeText={setFilterDesde}
-            placeholder="2025-02-01"
-            placeholderTextColor="#666"
-          />
-          <Text style={styles.modalLabel}>Fecha hasta (YYYY-MM-DD)</Text>
-          <TextInput
-            style={styles.modalInput}
-            value={filterHasta}
-            onChangeText={setFilterHasta}
-            placeholder="2025-02-28"
-            placeholderTextColor="#666"
-          />
+          <Text style={styles.modalLabel}>Rango (toca para calendario)</Text>
+          <View style={styles.exportDateRow}>
+            <Text style={styles.exportDateLbl}>Desde</Text>
+            <YmdDatePickerField
+              value={filterDesde}
+              onChange={setFilterDesde}
+              maximumDate={isValidYmd(filterHasta) ? filterHasta : undefined}
+              variant="dark"
+              narrow={false}
+            />
+            <Text style={styles.exportDateLbl}>Hasta</Text>
+            <YmdDatePickerField
+              value={filterHasta}
+              onChange={setFilterHasta}
+              minimumDate={isValidYmd(filterDesde) ? filterDesde : undefined}
+              variant="dark"
+              narrow={false}
+            />
+          </View>
           <TouchableOpacity style={styles.exportModalSecBtn} onPress={setCurrentMonth}>
             <Text style={styles.exportModalSecTxt}>Usar mes actual</Text>
           </TouchableOpacity>
@@ -869,7 +1099,7 @@ function ExportModal({
             onPress={onExportCalendar}
             disabled={exporting}
           >
-            <Text style={styles.modalBtnSaveTxt}>Exportar calendario del mes (PDF)</Text>
+            <Text style={styles.modalBtnSaveTxt}>Exportar rejilla por meses (PDF, rango)</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalBtnCancel} onPress={onClose}>
             <Text style={styles.modalBtnCancelTxt}>Cerrar</Text>
@@ -1041,8 +1271,10 @@ export default function Calendario({
   players = [],
   onBack,
   onVerPartido,
+  onOpenBiblioteca,
 }: CalendarioProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const screen = useScreenMetrics();
+  const [viewMode, setViewMode] = useState<ViewMode>('calendar');
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
 
   const [eventModalVisible, setEventModalVisible] = useState(false);
@@ -1052,10 +1284,14 @@ export default function Calendario({
   const now = new Date();
   const [exportModalVisible, setExportModalVisible] = useState(false);
   const [filterDesde, setFilterDesde] = useState(() => firstDayOfMonth(now.getFullYear(), now.getMonth() + 1));
-  const [filterHasta, setFilterHasta] = useState(() => lastDayOfMonth(now.getFullYear(), now.getMonth() + 1));
+  const [filterHasta, setFilterHasta] = useState(() => dateToYmd(new Date()));
   const [exporting, setExporting] = useState(false);
 
   const { matches, loading, error, syncFromSheets } = useMatches(partidos, setPartidos, players, eventosCalendario);
+
+  useEffect(() => {
+    rescheduleAllCalendarReminders(eventosCalendario).catch(() => {});
+  }, [eventosCalendario]);
 
   const matchesFiltered = useMemo(() => {
     return matches.filter((m) => {
@@ -1096,6 +1332,11 @@ export default function Calendario({
       observaciones: ev.observaciones || '',
       descripcion: ev.descripcion || '',
       ubicacionMaps: ev.ubicacionMaps || '',
+      recordatorioActivo: ev.recordatorioActivo !== false,
+      recordatorioHorasAntes:
+        Number.isFinite(Number(ev.recordatorioHorasAntes)) && Number(ev.recordatorioHorasAntes) > 0
+          ? Number(ev.recordatorioHorasAntes)
+          : DEFAULT_REMINDER_HOURS,
     });
     setEditingEventId(ev.id);
     setEventModalVisible(true);
@@ -1117,8 +1358,13 @@ export default function Calendario({
         : tipoEvento === 'Entrenamiento'
         ? 'Entrenamiento'
         : ((form.descripcion || '').trim() || 'Otro');
+      const baseId = isEditing ? editingEventId : `ev_${Date.now()}`;
+      const reminderHours =
+        Number.isFinite(Number(form.recordatorioHorasAntes)) && Number(form.recordatorioHorasAntes) > 0
+          ? Number(form.recordatorioHorasAntes)
+          : DEFAULT_REMINDER_HOURS;
       const newEvent: EventoCalendarioStored = {
-        id: isEditing ? editingEventId : `ev_${Date.now()}`,
+        id: baseId,
         tipoEvento,
         tipoCompeticion: tipoEvento === 'Partido' ? (form.tipoCompeticion || '').trim() : '',
         rival,
@@ -1135,18 +1381,48 @@ export default function Calendario({
         ubicacionMaps: tipoEvento === 'Partido' ? (form.ubicacionMaps || '').trim() : '',
         ubicacion: tipoEvento === 'Partido' ? (form.lugarPartido || '').trim() : '',
         notas: '',
+        recordatorioActivo: form.recordatorioActivo !== false,
+        recordatorioHorasAntes: reminderHours,
       };
+      /** Si es Entrenamiento y hay fechas extra, generamos un evento por cada fecha. */
+      const repeatedEvents: EventoCalendarioStored[] = [];
+      if (!isEditing && tipoEvento === 'Entrenamiento' && Array.isArray(form.extraDates)) {
+        form.extraDates.forEach((d, idx) => {
+          if (!d || d === newEvent.dateKey) return;
+          repeatedEvents.push({ ...newEvent, id: `ev_${Date.now()}_r${idx}`, dateKey: d });
+        });
+      }
       if (setEventosCalendario) {
         if (isEditing) {
           setEventosCalendario(eventosCalendario.map((ev) => (ev.id === editingEventId ? newEvent : ev)));
         } else {
-          setEventosCalendario([...eventosCalendario, newEvent]);
+          setEventosCalendario([...eventosCalendario, newEvent, ...repeatedEvents]);
         }
       }
       setEventModalVisible(false);
       setEventFormData(null);
       setEditingEventId(null);
-      if (!isEditing) await createEventFromForm(form);
+
+      const toSchedule = [newEvent, ...repeatedEvents];
+      for (const ev of toSchedule) {
+        try {
+          await scheduleEventReminder(ev);
+        } catch {
+          /* no bloqueamos el guardado */
+        }
+      }
+
+      if (!isEditing) {
+        await createEventFromForm(form);
+        /** Replicamos también en el calendario del dispositivo. */
+        for (const rep of repeatedEvents) {
+          try {
+            await createEventFromForm({ ...form, dateKey: rep.dateKey });
+          } catch {
+            /** Si una falla, seguimos con las demás. */
+          }
+        }
+      }
     },
     [createEventFromForm, setEventosCalendario, eventosCalendario, editingEventId]
   );
@@ -1154,6 +1430,7 @@ export default function Calendario({
   const handleDeleteEvent = useCallback(
     (id: string) => {
       if (!setEventosCalendario || !id.startsWith('ev_')) return;
+      cancelEventReminder(id).catch(() => {});
       setEventosCalendario(eventosCalendario.filter((ev) => (ev.id.startsWith('ev_') ? ev.id : `ev_${ev.id}`) !== id));
     },
     [setEventosCalendario, eventosCalendario]
@@ -1227,64 +1504,36 @@ export default function Calendario({
   const handleExportCalendar = useCallback(async () => {
     setExporting(true);
     try {
-      const [y, m] = filterDesde.split('-').map(Number);
-      const monthLabel = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][(m || 1) - 1];
-      const first = new Date(y, (m || 1) - 1, 1);
-      const last = new Date(y, m || 1, 0);
-      const startDow = first.getDay();
-      const daysInMonth = last.getDate();
-      const weekDays = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-      const prefix = `${y}-${String(m).padStart(2, '0')}-`;
-      const monthMatches = matches.filter((mm) => parseDateKey(mm.fecha).startsWith(prefix));
-      const matchesByDay: Record<number, MatchItem[]> = {};
-      for (let d = 1; d <= daysInMonth; d++) {
-        const key = `${prefix}${String(d).padStart(2, '0')}`;
-        matchesByDay[d] = monthMatches.filter((mm) => parseDateKey(mm.fecha) === key);
+      const ymdRe = /^\d{4}-\d{2}-\d{2}$/;
+      let desde = filterDesde.trim();
+      let hasta = filterHasta.trim();
+      if (!ymdRe.test(desde) || !ymdRe.test(hasta)) {
+        Alert.alert('Fechas', 'Indica desde y hasta en formato YYYY-MM-DD.');
+        return;
       }
-      let cells: string[] = [];
-      for (let i = 0; i < startDow; i++) cells.push('<td></td>');
-      for (let d = 1; d <= daysInMonth; d++) {
-        const list = (matchesByDay[d] || [])
-          .map((mm) => {
-            if (mm.isEvento) {
-              const tipo = mm.tipo || 'Otro';
-              if (tipo === 'Partido') {
-                const parts = [
-                  `• ⚽ [Partido]`,
-                  `🕒 ${mm.hora || '--'}`,
-                  `🏆 ${mm.tipoCompeticion || '—'}`,
-                  `🆚 ${mm.rival || '—'}`,
-                  `📍 ${mm.lugar || '—'}`,
-                  `📌 ${mm.lugarQuedada || '—'}`,
-                  `🕘 ${mm.horaQuedada || '--'}`,
-                  `👕 ${mm.equipacion || '—'}`,
-                  `📝 ${mm.observaciones || '—'}`,
-                ];
-                if (mm.ubicacionMaps) parts.push(`🗺 ${mm.ubicacionMaps}`);
-                return parts.join(' | ');
-              }
-              if (tipo === 'Entrenamiento') {
-                return `• 🏃 [Entrenamiento] 🕒 ${mm.hora || '--'} | ⏱ ${mm.horaFin || '--'} | 📝 ${mm.observaciones || '—'}`;
-              }
-              return `• 📌 [Otro] 🕒 ${mm.hora || '--'} | ⏱ ${mm.horaFin || '--'} | 📝 ${mm.descripcion || '—'}`;
-            }
-            const resultado = mm.estado === 'jugado' ? `${mm.golesFavor}-${mm.golesContra}` : 'Pendiente';
-            return `• [Partido] ${mm.hora || '--'} | vs ${mm.rival} | ${mm.lugar} | ${mm.tipo} | ${resultado}`;
-          })
-          .map((line) => escapeHtml(line))
-          .join('<br/>');
-        cells.push(`<td style="border:1px solid #ccc; padding:4px; vertical-align:top; font-size:10px;"><strong>${d}</strong><br/>${list || '—'}</td>`);
-        if ((startDow + d) % 7 === 0) cells.push('</tr><tr>');
+      if (desde > hasta) {
+        const t = desde;
+        desde = hasta;
+        hasta = t;
       }
+      const months = iterateMonthsInclusive(ymFromYmd(desde), ymFromYmd(hasta));
+      const title = `Calendario – ${formatDateLabel(desde)} a ${formatDateLabel(hasta)}`;
+      const blocks = months
+        .map((ym, idx) => {
+          const inner = buildSingleMonthCalendarPdfHtml(ym.y, ym.m, matches, desde, hasta);
+          const brk = idx > 0 ? '<div style="page-break-before:always;"></div>' : '';
+          return `${brk}${inner}`;
+        })
+        .join('');
       const html = `
         <!DOCTYPE html><html><head><meta charset="utf-8"/><style>
           body{ font-family: sans-serif; padding: 16px; }
           table{ width:100%; border-collapse: collapse; font-size: 11px; }
           th{ background:#012E57; color:#fff; padding: 6px; }
         </style></head><body>
-        <h1>Calendario – ${monthLabel} ${y}</h1>
-        <table><thead><tr>${weekDays.map((w) => `<th>${w}</th>`).join('')}</tr></thead>
-        <tbody><tr>${cells.join('')}</tr></tbody></table>
+        <h1>${escapeHtml(title)}</h1>
+        <p style="font-size:11px;color:#666;margin-bottom:12px;">Una página por cada mes del rango; en cada día solo aparecen actividades dentro del periodo.</p>
+        ${blocks}
         </body></html>`;
       const { uri } = await Print.printToFileAsync({ html });
       const available = await Sharing.isAvailableAsync();
@@ -1295,10 +1544,10 @@ export default function Calendario({
     } finally {
       setExporting(false);
     }
-  }, [matches, filterDesde]);
+  }, [matches, filterDesde, filterHasta]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={[styles.container, { paddingHorizontal: screen.horizontalPadding }]} edges={['top', 'bottom']}>
       <EventModal
         visible={eventModalVisible}
         form={eventFormData}
@@ -1321,39 +1570,51 @@ export default function Calendario({
         onExportCalendar={handleExportCalendar}
         exporting={exporting}
       />
-      <View style={styles.header}>
-        <TouchableOpacity onPress={onBack} style={styles.headerBtn}>
-          <Text style={styles.headerBtnTxt}>← Volver</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Calendario</Text>
-        <View style={styles.headerBtn} />
+      <View style={styles.screenTitleBar}>
+        <Text style={styles.screenTitle}>Calendario</Text>
       </View>
 
-      <View style={styles.headerActions}>
-        <TouchableOpacity style={styles.exportBtn} onPress={() => setExportModalVisible(true)}>
-          <FontAwesome name="file-pdf-o" size={16} color="#FFF" />
-          <Text style={styles.exportBtnTxt}> Exportar</Text>
+      <View style={styles.headerActionsRow}>
+        <TouchableOpacity style={[styles.calHdrBtn, styles.calHdrBtnNeutral]} onPress={onBack} activeOpacity={0.85}>
+          <FontAwesome name="chevron-left" size={14} color="#E3F2FD" />
+          <Text style={styles.calHdrBtnTxt}>VOLVER</Text>
         </TouchableOpacity>
+        {onOpenBiblioteca ? (
+          <TouchableOpacity style={[styles.calHdrBtn, styles.calHdrBtnBiblio]} onPress={onOpenBiblioteca} activeOpacity={0.85}>
+            <FontAwesome name="book" size={14} color="#001A33" />
+            <Text style={[styles.calHdrBtnTxt, styles.calHdrBtnTxtDark]}>BIBL.</Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          style={[styles.calHdrBtn, styles.calHdrBtnExport]}
+          onPress={() => setExportModalVisible(true)}
+          activeOpacity={0.85}
+        >
+          <FontAwesome name="file-pdf-o" size={14} color="#FFF" />
+          <Text style={styles.calHdrBtnTxt}>EXPORTAR</Text>
+        </TouchableOpacity>
+        {setPartidos ? (
+          <TouchableOpacity
+            style={[styles.calHdrBtn, styles.calHdrBtnSync]}
+            onPress={syncFromSheets}
+            disabled={loading}
+            activeOpacity={0.85}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <>
+                <FontAwesome name="cloud-download" size={14} color="#FFF" />
+                <Text style={styles.calHdrBtnTxtMultiline} numberOfLines={2}>
+                  Sincronizar{'\n'}desde Sheets
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <ViewToggle mode={viewMode} onModeChange={setViewMode} />
-
-      {setPartidos && (
-        <TouchableOpacity
-          style={styles.syncBtn}
-          onPress={syncFromSheets}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator size="small" color="#FFF" />
-          ) : (
-            <>
-              <FontAwesome name="cloud-download" size={16} color="#FFF" />
-              <Text style={styles.syncBtnTxt}> Sincronizar desde Sheets</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      )}
 
       {error ? (
         <View style={styles.errorBox}>
@@ -1436,19 +1697,43 @@ export default function Calendario({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#001A33' },
-  header: {
-    flexDirection: 'row',
+  screenTitleBar: {
+    paddingTop: 8,
+    paddingBottom: 8,
+    paddingHorizontal: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#012E57',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  },
+  screenTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+  headerActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 8,
+    paddingHorizontal: 0,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#012E57',
   },
-  headerBtn: { minWidth: 80 },
-  headerBtnTxt: { color: '#00aaff', fontSize: 15, fontWeight: '600' },
-  headerTitle: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
-  viewToggle: { flexDirection: 'row', padding: 12, gap: 10 },
+  calHdrBtn: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    gap: 4,
+  },
+  calHdrBtnNeutral: { backgroundColor: '#0D47A1' },
+  calHdrBtnExport: { backgroundColor: '#2E7D32' },
+  calHdrBtnSync: { backgroundColor: '#1565C0' },
+  calHdrBtnBiblio: { backgroundColor: '#FFD166' },
+  calHdrBtnTxt: { color: '#FFF', fontSize: 10, fontWeight: '800', textAlign: 'center' },
+  calHdrBtnTxtDark: { color: '#001A33' },
+  calHdrBtnTxtMultiline: { color: '#FFF', fontSize: 9, fontWeight: '800', textAlign: 'center', lineHeight: 11 },
+  viewToggle: { flexDirection: 'row', paddingVertical: 12, gap: 10 },
   toggleBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -1461,21 +1746,10 @@ const styles = StyleSheet.create({
   toggleBtnActive: { backgroundColor: '#00aaff' },
   toggleTxt: { color: '#FFF', fontSize: 13, fontWeight: '600' },
   toggleTxtActive: { color: '#001A33' },
-  syncBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 12,
-    marginBottom: 10,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: '#1565C0',
-  },
-  syncBtnTxt: { color: '#FFF', fontSize: 13, fontWeight: '600' },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 12,
+    marginHorizontal: 0,
     marginBottom: 10,
     padding: 12,
     borderRadius: 8,
@@ -1484,7 +1758,7 @@ const styles = StyleSheet.create({
   },
   errorTxt: { color: '#FF4757', fontSize: 13, flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { padding: 12, paddingBottom: 40 },
+  scrollContent: { paddingVertical: 12, paddingBottom: 40 },
   calendarWrap: { marginBottom: 20 },
   calendarNav: {
     flexDirection: 'row',
@@ -1590,6 +1864,11 @@ const styles = StyleSheet.create({
   },
   modalInputMultiline: { minHeight: 60, textAlignVertical: 'top' },
   modalDateReadonly: { color: '#AAA', fontSize: 15, paddingVertical: 8 },
+  modalDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
   modalButtons: { flexDirection: 'row', marginTop: 14, justifyContent: 'space-between' },
   modalBtnHalf: { flex: 1 },
   modalBtnCancel: {
@@ -1609,17 +1888,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalBtnSaveTxt: { color: '#001A33', fontWeight: 'bold' },
+  reminderToggleRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  reminderToggleBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#ECEFF1',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#B0BEC5',
+  },
+  reminderToggleBtnOn: { backgroundColor: '#2E7D32', borderColor: '#1B5E20' },
+  reminderToggleBtnOff: { backgroundColor: '#C62828', borderColor: '#B71C1C' },
+  reminderToggleTxt: { color: '#546E7A', fontWeight: '800', fontSize: 13 },
+  reminderToggleTxtOn: { color: '#FFF' },
+  reminderChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 6 },
+  reminderChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#ECEFF1',
+    borderWidth: 1,
+    borderColor: '#B0BEC5',
+  },
+  reminderChipOn: { backgroundColor: '#E65100', borderColor: '#EF6C00' },
+  reminderChipTxt: { color: '#455A64', fontWeight: '700', fontSize: 12 },
+  reminderChipTxtOn: { color: '#FFF' },
+  reminderHint: { color: '#78909C', fontSize: 11, marginBottom: 8, lineHeight: 15 },
+  exportDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  exportDateLbl: { color: '#00aaff', fontSize: 12, fontWeight: '600' },
   exportModalSecBtn: { marginTop: 8, paddingVertical: 8 },
   exportModalSecTxt: { color: '#00aaff', fontSize: 13 },
   exportModalCalBtn: { backgroundColor: '#2E7D32', marginTop: 8 },
-  headerActions: { flexDirection: 'row', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 16 },
-  exportBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#2E7D32',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-  },
-  exportBtnTxt: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
+  extraDateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  extraDateAddBtn: { backgroundColor: '#0D47A1', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  extraDateAddTxt: { color: '#FFF', fontSize: 11, fontWeight: '800' },
+  extraDateChipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  extraDateChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0D47A1', borderRadius: 14, paddingHorizontal: 8, paddingVertical: 4 },
+  extraDateChipTxt: { color: '#FFF', fontSize: 11, fontWeight: '700', marginRight: 6 },
+  extraDateChipClose: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#FFF', alignItems: 'center', justifyContent: 'center' },
+  extraDateChipCloseTxt: { color: '#0D47A1', fontSize: 12, fontWeight: '900', lineHeight: 14 },
+  extraDateHint: { color: '#90CAF9', fontSize: 11, fontStyle: 'italic', marginTop: 6 },
 });

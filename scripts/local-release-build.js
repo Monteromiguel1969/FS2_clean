@@ -6,6 +6,8 @@ const root = process.cwd();
 const args = process.argv.slice(2);
 const prepareOnly = args.includes('--prepare-only');
 const autoPush = !args.includes('--no-autopush');
+const publishVersion = !args.includes('--no-publish-version');
+const firebasePublish = !args.includes('--no-firebase');
 const projectName = 'fs_clean';
 const backupRoot = 'H:/Mi unidad/Mi Diario Deportivo/BACKUPS';
 
@@ -29,6 +31,8 @@ function bumpSemverPatch(version) {
   parts[2] += 1;
   return `${parts[0]}.${parts[1]}.${parts[2]}`;
 }
+
+const { resolveApkUrl } = require('./resolve-apk-url');
 
 function bumpRuntime(runtimeVersion) {
   return bumpSemverPatch(runtimeVersion || '1.0.0');
@@ -56,6 +60,46 @@ function maybeRunSyncHelpScript() {
   const helpScript = path.join(root, 'scripts', 'sync-help-changelog.js');
   if (fs.existsSync(helpScript)) {
     run(process.execPath, [helpScript], root);
+  }
+}
+
+function maybeFirebasePublish() {
+  if (!firebasePublish) {
+    console.log('[release] firebase publish disabled (--no-firebase)');
+    return;
+  }
+  const cfgPath = path.join(root, 'config', 'firebase-app.json');
+  if (!fs.existsSync(cfgPath)) {
+    console.log('[release] Firebase no configurado (ejecuta: node scripts/firebase-setup.mjs)');
+    return;
+  }
+  const cfg = readJson(cfgPath);
+  if (!String(cfg.projectId || '').trim() || !String(cfg.androidAppId || '').trim()) {
+    console.log('[release] Firebase incompleto; solo Version_App (Sheet).');
+    return;
+  }
+  const script = path.join(root, 'scripts', 'firebase-publish-release.mjs');
+  const res = runCapture(process.execPath, [script], root);
+  if (res.stdout) process.stdout.write(res.stdout);
+  if (res.stderr) process.stderr.write(res.stderr);
+  if (res.status !== 0) {
+    console.log('[release] Firebase publish falló; Version_App (Sheet) sigue activo como respaldo.');
+    maybePublishVersionApp();
+  }
+}
+
+function maybePublishVersionApp() {
+  if (!publishVersion) {
+    console.log('[release] publish Version_App disabled (--no-publish-version)');
+    return;
+  }
+  const publishScript = path.join(root, 'scripts', 'publish-version-app.js');
+  if (!fs.existsSync(publishScript)) return;
+  const res = runCapture(process.execPath, [publishScript], root);
+  if (res.stdout) process.stdout.write(res.stdout);
+  if (res.stderr) process.stderr.write(res.stderr);
+  if (res.status !== 0) {
+    console.log('[release] Version_App no publicada (redespliega Apps Script o usa --no-publish-version)');
   }
 }
 
@@ -243,5 +287,48 @@ const outName = `futsal-lega-v3-${newVersion}-vc${newCode}.apk`;
 const outPath = path.join(releasesDir, outName);
 fs.copyFileSync(apkPath, outPath);
 
+const firebasePublicDir = path.join(root, 'firebase', 'public');
+if (!fs.existsSync(firebasePublicDir)) fs.mkdirSync(firebasePublicDir, { recursive: true });
+const hostingApkPath = path.join(firebasePublicDir, 'latest.bin');
+fs.copyFileSync(apkPath, hostingApkPath);
+
+let hostingApkUrl = 'https://futsal-amas-lega.web.app/latest.bin';
+const fbCfgPath = path.join(root, 'config', 'firebase-app.json');
+if (fs.existsSync(fbCfgPath)) {
+  try {
+    const fbCfg = readJson(fbCfgPath);
+    const pid = String(fbCfg.projectId || '').trim();
+    if (pid) hostingApkUrl = `https://${pid}.web.app/latest.bin`;
+  } catch (e) {
+    /* keep default */
+  }
+}
+fs.writeFileSync(path.join(releasesDir, 'apk-drive-url.txt'), `${hostingApkUrl}\n`, 'utf8');
+console.log(`[release] Hosting APK: ${hostingApkPath}`);
+console.log(`[release] apkUrl: ${hostingApkUrl}`);
+
+const manifestPath = path.join(releasesDir, 'app-version-manifest.json');
+const manifestApkUrl = hostingApkUrl;
+const manifest = {
+  version: newVersion,
+  versionCode: newCode,
+  apkFileName: outName,
+  apkUrl: manifestApkUrl,
+  changelog: `Versión ${newVersion} (vc${newCode})`,
+  updatedAt: new Date().toISOString(),
+};
+writeJson(manifestPath, manifest);
+
 console.log(`[release] APK ready: ${outPath}`);
+console.log(`[release] Manifest: ${manifestPath}`);
+if (firebasePublish && fs.existsSync(path.join(root, 'config', 'firebase-app.json'))) {
+  const fbCfg = readJson(path.join(root, 'config', 'firebase-app.json'));
+  if (String(fbCfg.projectId || '').trim() && String(fbCfg.androidAppId || '').trim()) {
+    maybeFirebasePublish();
+  } else {
+    maybePublishVersionApp();
+  }
+} else {
+  maybePublishVersionApp();
+}
 autoCommitAndPush(newVersion, newCode);

@@ -15,4 +15,3 @@ google-services.json
 credentials*.json
 keystore.properties
 oauth*.txt
-releases/*.apk

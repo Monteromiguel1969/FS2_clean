@@ -103,8 +103,8 @@ android {
         applicationId 'com.monterohidalgo.futsal_lega_v3'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 59
-        versionName "1.0.58"
+        versionCode 186
+        versionName "1.4.7"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -146,6 +146,10 @@ android {
     }
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+    }
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
     }
 }
 

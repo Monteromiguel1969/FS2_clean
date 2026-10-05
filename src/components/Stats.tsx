@@ -1,19 +1,17 @@
 import { SafeAreaView } from 'react-native-safe-area-context';
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, Alert, Linking, Modal, ActivityIndicator, useWindowDimensions } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { FontAwesome } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
-import { formatDateExport, parseToDate } from '../utils/dateFormat';
+import { formatDateExport, parseToDate, dateToYmd, isValidYmd } from '../utils/dateFormat';
+import { useScreenMetrics } from '../utils/useScreenMetrics';
+import { YmdDatePickerField } from './YmdDatePickerField';
+import { buildReportHeaderHtml, REPORT_BRAND } from '../utils/reportBranding';
+import { findRosterEntry, samePerson } from '../utils/playerIdentity';
 
 // --- MEDIDAS ESTRICTAS ---
-const ROW_HEIGHT = 50;    
-const FIX_NAME_W = 110;   
-const ENT_COL_W = 90;     
-const MATCH_COL_W = 190;  
-const SUB_COL_W = 47.5;
-const GLOB_COL_W = 75;
+const ROW_HEIGHT = 50;
 const SECTION_SPACER_H = 30;
 const RESUMEN_COLUMNS = ['ENT(N)', 'ENT(%)', 'PAR(N)', 'PAR(%)', 'DEDIC.', 'GOLES', 'CAP', 'MINS'];
 
@@ -46,8 +44,103 @@ const calcDedicacionGlobalPct = (entAsistidos, totalEntrenos, parAsistidos, tota
   return Math.round((asistidos / total) * 100);
 };
 
-export default function Stats({ players = [], entrenos = [], partidos = [], onBack, onEditSession, onDeleteSession }) {
-  const { width } = useWindowDimensions();
+/** Clave yyyy-mm-dd para comparar rangos (misma lógica que parseToDate). */
+function dateKeyFromFecha(fecha) {
+  const d = parseToDate(fecha);
+  if (!d || isNaN(d.getTime())) return null;
+  const ymd = dateToYmd(d);
+  return ymd || null;
+}
+
+function toScore10(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const scaled = n <= 5 ? n * 2 : n;
+  return Math.round(scaled * 100) / 100;
+}
+
+function latestPersonalEvaluation(evals) {
+  const personal = (Array.isArray(evals) ? evals : []).filter(
+    (e) => e?.personalForm && typeof e.personalForm === 'object'
+  );
+  if (!personal.length) return null;
+  const sorted = [...personal].sort((a, b) => {
+    const ka = dateKeyFromFecha(a?.fecha) || '';
+    const kb = dateKeyFromFecha(b?.fecha) || '';
+    if (ka !== kb) return ka.localeCompare(kb);
+    return String(a?.id || '').localeCompare(String(b?.id || ''));
+  });
+  return sorted[sorted.length - 1];
+}
+
+function sortEvalsByFecha(evals) {
+  return [...(Array.isArray(evals) ? evals : [])].sort((a, b) => {
+    const ka = dateKeyFromFecha(a?.fecha) || '';
+    const kb = dateKeyFromFecha(b?.fecha) || '';
+    if (ka !== kb) return ka.localeCompare(kb);
+    return String(a?.id || '').localeCompare(String(b?.id || ''));
+  });
+}
+
+function formatDelta(n) {
+  if (n == null || !Number.isFinite(n)) return '-';
+  const r = Math.round(n * 100) / 100;
+  if (r > 0) return `+${r}`;
+  return String(r);
+}
+
+function midpointDateKey(desde, hasta) {
+  const a = String(desde || '');
+  const b = String(hasta || '');
+  if (!a || !b) return a || b || '';
+  const pa = a.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const pb = b.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!pa || !pb) return a;
+  const ta = Date.UTC(+pa[1], +pa[2] - 1, +pa[3]);
+  const tb = Date.UTC(+pb[1], +pb[2] - 1, +pb[3]);
+  const mid = new Date((ta + tb) / 2);
+  const y = mid.getUTCFullYear();
+  const m = String(mid.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(mid.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export default function Stats({
+  players = [],
+  entrenos = [],
+  partidos = [],
+  onBack,
+  onEditSession,
+  onDeleteSession,
+  onOpenBiblioteca,
+  escudoUri = null,
+  equipoNombre = '',
+  temporadaNombre = '',
+}: {
+  players?: unknown[];
+  entrenos?: unknown[];
+  partidos?: unknown[];
+  onBack: () => void;
+  onEditSession?: (item: unknown, tipo: string) => void;
+  onDeleteSession?: (id: string, tipo: string) => void;
+  onOpenBiblioteca?: () => void;
+  escudoUri?: string | null;
+  equipoNombre?: string;
+  temporadaNombre?: string;
+}) {
+  const { width, height } = useWindowDimensions();
+  const gridCol = useMemo(() => {
+    const s = Math.max(0.52, Math.min(1.22, width / 390));
+    const matchColW = Math.round(Math.max(118, Math.min(238, 190 * s)));
+    const subColW = matchColW / 4;
+    return {
+      fixNameW: Math.round(Math.max(80, Math.min(148, 110 * s))),
+      entColW: Math.round(Math.max(58, Math.min(108, 90 * s))),
+      matchColW,
+      globColW: Math.round(Math.max(48, Math.min(92, 75 * s))),
+      subColW,
+    };
+  }, [width]);
   const baseScale = Math.max(0.78, Math.min(1.08, width / 420));
   const compactResumenLabels = width < 520;
   const compactDiLabels = width < 430;
@@ -66,10 +159,12 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
       tabTxt: { fontSize: tabFont },
     };
   }, [baseScale]);
+  const screen = useScreenMetrics();
   const partidosList = Array.isArray(partidos) ? partidos : [];
   const [activeTab, setActiveTab] = useState('ENTRENOS');
   const [modalActaVisible, setModalActaVisible] = useState(false);
   const [actaSeleccionada, setActaSeleccionada] = useState(null);
+  const [diDetalleId, setDiDetalleId] = useState(null);
 
   const leftRef = useRef(null);
   const rightRef = useRef(null);
@@ -96,8 +191,67 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
     const any = new Date(s).getTime();
     return isNaN(any) ? 0 : any;
   };
-  const entrenosOrdenados = useMemo(() => [...entrenos].sort((a, b) => parseFecha(a.fecha) - parseFecha(b.fecha)), [entrenos]);
-  const partidosOrdenados = useMemo(() => [...partidosList].sort((a, b) => parseFecha(a.fecha) - parseFecha(b.fecha)), [partidosList]);
+
+  const dataDateBounds = useMemo(() => {
+    const keys = [];
+    (entrenos || []).forEach((e) => {
+      const k = dateKeyFromFecha(e?.fecha);
+      if (k) keys.push(k);
+    });
+    (partidosList || []).forEach((p) => {
+      const k = dateKeyFromFecha(p?.fecha);
+      if (k) keys.push(k);
+    });
+    keys.sort();
+    return { min: keys[0] || null, max: keys[keys.length - 1] || null };
+  }, [entrenos, partidosList]);
+
+  const [statsDesdeInput, setStatsDesdeInput] = useState('');
+  const [statsHastaInput, setStatsHastaInput] = useState(() => dateToYmd(new Date()));
+  const statsRangeInit = useRef(false);
+  useEffect(() => {
+    if (statsRangeInit.current || !dataDateBounds.min || !dataDateBounds.max) return;
+    statsRangeInit.current = true;
+    setStatsDesdeInput(dataDateBounds.min);
+    setStatsHastaInput(dateToYmd(new Date()));
+  }, [dataDateBounds.min, dataDateBounds.max]);
+
+  const rangeDesde = useMemo(() => {
+    const v = statsDesdeInput.trim();
+    if (v && isValidYmd(v)) return v;
+    return dataDateBounds.min || '2000-01-01';
+  }, [statsDesdeInput, dataDateBounds.min]);
+
+  const rangeHasta = useMemo(() => {
+    const v = statsHastaInput.trim();
+    if (v && isValidYmd(v)) return v;
+    return dataDateBounds.max || '2099-12-31';
+  }, [statsHastaInput, dataDateBounds.max]);
+
+  const entrenosFiltrados = useMemo(() => {
+    return (entrenos || []).filter((e) => {
+      const k = dateKeyFromFecha(e?.fecha);
+      if (!k) return true;
+      return k >= rangeDesde && k <= rangeHasta;
+    });
+  }, [entrenos, rangeDesde, rangeHasta]);
+
+  const partidosFiltrados = useMemo(() => {
+    return (partidosList || []).filter((p) => {
+      const k = dateKeyFromFecha(p?.fecha);
+      if (!k) return true;
+      return k >= rangeDesde && k <= rangeHasta;
+    });
+  }, [partidosList, rangeDesde, rangeHasta]);
+
+  const entrenosOrdenados = useMemo(
+    () => [...entrenosFiltrados].sort((a, b) => parseFecha(a.fecha) - parseFecha(b.fecha)),
+    [entrenosFiltrados]
+  );
+  const partidosOrdenados = useMemo(
+    () => [...partidosFiltrados].sort((a, b) => parseFecha(a.fecha) - parseFecha(b.fecha)),
+    [partidosFiltrados]
+  );
 
   // --- LÓGICA DE COMPARTIR (Cualquier medio) ---
   const compartirArchivoUniversal = async (uri, tipo) => {
@@ -152,12 +306,12 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
   const statsCalculadas = useMemo(() => {
     const procesarLista = (lista) => lista.map(jug => {
       let global = { ent: 0, par: 0, gol: 0, cap: 0, min: 0 }; // min = total segundos
-      global.ent = entrenos.filter(e => e.asistencia?.find(a => a.id === jug.id && a.estado === 'AS')).length;
+      global.ent = entrenosFiltrados.filter((e) => findRosterEntry(e.asistencia, jug)?.estado === 'AS').length;
 
       const porComp = todasLasComps.map(c => {
         let s = { nombre: c, par: 0, gol: 0, cap: 0, min: 0 }; // min = total segundos
-        partidosList.filter(p => (p.tipo?.toUpperCase() || 'LIGA') === c).forEach(p => {
-          const reg = p.convocatoria?.find(conv => conv.id === jug.id);
+        partidosFiltrados.filter(p => (p.tipo?.toUpperCase() || 'LIGA') === c).forEach(p => {
+          const reg = findRosterEntry(p.convocatoria, jug);
           if (reg && reg.estado === 'AS') {
             s.par++; global.par++;
             s.gol += parseInt(reg.goles) || 0; global.gol += parseInt(reg.goles) || 0;
@@ -176,7 +330,7 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
       staff: procesarLista(listaStaff),
       resComp: todasLasComps.map(c => {
         let res = { nombre: c, j: 0, g: 0, e: 0, p: 0, gf: 0, gc: 0 };
-        partidosList.filter(p => (p.tipo?.toUpperCase() || 'LIGA') === c).forEach(part => {
+        partidosFiltrados.filter(p => (p.tipo?.toUpperCase() || 'LIGA') === c).forEach(part => {
           res.j++;
           const gf = parseInt(part.golesFavor) || 0;
           const gc = parseInt(part.golesContra) || 0;
@@ -185,49 +339,111 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
         });
         return res;
       }),
-      local: partidosList.filter(p => p.lugar === 'LOCAL').reduce((acc, p) => {
+      local: partidosFiltrados.filter(p => p.lugar === 'LOCAL').reduce((acc, p) => {
           acc.j++; const gf=parseInt(p.golesFavor)||0, gc=parseInt(p.golesContra)||0;
           acc.gf+=gf; acc.gc+=gc; if(gf>gc)acc.g++; else if(gf===gc)acc.e++; else acc.p++;
           return acc;
       }, {nombre:'LOCAL', j:0, g:0, e:0, p:0, gf:0, gc:0}),
-      visita: partidosList.filter(p => p.lugar === 'VISITANTE').reduce((acc, p) => {
+      visita: partidosFiltrados.filter(p => p.lugar === 'VISITANTE').reduce((acc, p) => {
           acc.j++; const gf=parseInt(p.golesFavor)||0, gc=parseInt(p.golesContra)||0;
           acc.gf+=gf; acc.gc+=gc; if(gf>gc)acc.g++; else if(gf===gc)acc.e++; else acc.p++;
           return acc;
       }, {nombre:'VISITANTE', j:0, g:0, e:0, p:0, gf:0, gc:0})
     };
-  }, [listaJugadores, listaStaff, entrenos, partidosList, todasLasComps]);
+  }, [listaJugadores, listaStaff, entrenosFiltrados, partidosFiltrados, todasLasComps]);
 
   const rowsValoraciones = useMemo(() => {
     return [...listaJugadores, ...listaStaff].map((j, idx) => {
-      const evals = Array.isArray(j?.evaluacionesDI) ? j.evaluacionesDI : [];
-      const diScores = evals
-        .map((e) => Number(e?.score))
-        .filter((n) => Number.isFinite(n) && n > 0);
-      const personalOnly = evals.filter((e) => e?.personalForm && typeof e.personalForm === 'object');
-      const latestPersonal = personalOnly.length ? personalOnly[personalOnly.length - 1] : null;
-      const personalScore = Number(latestPersonal?.score);
+      const evalsAll = Array.isArray(j?.evaluacionesDI) ? j.evaluacionesDI : [];
+      const evals = evalsAll.filter((e) => {
+        const fk = dateKeyFromFecha(e?.fecha);
+        if (!fk) return true;
+        return fk >= rangeDesde && fk <= rangeHasta;
+      });
+      const sorted = sortEvalsByFecha(evals).filter((e) => {
+        const n = Number(e?.score);
+        return Number.isFinite(n) && n > 0;
+      });
+      const diScores = sorted.map((e) => Number(e.score));
+      const latestPersonal = latestPersonalEvaluation(evals);
+      const personalScore = toScore10(latestPersonal?.score);
       const diProm = diScores.length ? (diScores.reduce((a, b) => a + b, 0) / diScores.length) : null;
+      const ultima = sorted.length ? Number(sorted[sorted.length - 1].score) : null;
+      const anterior = sorted.length >= 2 ? Number(sorted[sorted.length - 2].score) : null;
+      const delta = ultima != null && anterior != null ? Math.round((ultima - anterior) * 100) / 100 : null;
+      const serie = sorted.slice(-5).map((e) => {
+        const s = Math.round(Number(e.score) * 100) / 100;
+        return `${s}`;
+      });
       return {
         id: j?.id || `sin-id-${idx}`,
         nombre: j?.name || '-',
         rol: j?.role || '-',
         valoracionIA: Number.isFinite(Number(j?.valoracionIA)) ? Number(j?.valoracionIA) : null,
         diGlobal: diProm == null ? null : Math.round(diProm * 100) / 100,
-        personal: Number.isFinite(personalScore) ? Math.round(personalScore * 100) / 100 : null,
+        personal: personalScore,
         fechaPersonal: latestPersonal?.fecha || '',
+        ultima: ultima == null ? null : Math.round(ultima * 100) / 100,
+        anterior: anterior == null ? null : Math.round(anterior * 100) / 100,
+        delta,
+        nEvals: sorted.length,
+        serieTxt: serie.length ? serie.join(' → ') : '-',
+        fechaUltima: sorted.length ? String(sorted[sorted.length - 1]?.fecha || '') : '',
       };
     });
-  }, [listaJugadores, listaStaff]);
+  }, [listaJugadores, listaStaff, rangeDesde, rangeHasta]);
+
+  /** Compara 1ª mitad vs 2ª mitad del periodo (goles, mins, % entreno). */
+  const rowsEvolucionRendimiento = useMemo(() => {
+    const mid = midpointDateKey(rangeDesde, rangeHasta);
+    const ent1 = (entrenosFiltrados || []).filter((e) => (dateKeyFromFecha(e?.fecha) || '') <= mid);
+    const ent2 = (entrenosFiltrados || []).filter((e) => (dateKeyFromFecha(e?.fecha) || '') > mid);
+    const par1 = (partidosFiltrados || []).filter((p) => (dateKeyFromFecha(p?.fecha) || '') <= mid);
+    const par2 = (partidosFiltrados || []).filter((p) => (dateKeyFromFecha(p?.fecha) || '') > mid);
+
+    const metrics = (jug, ents, parts) => {
+      const ent = ents.filter((e) => findRosterEntry(e.asistencia, jug)?.estado === 'AS').length;
+      let gol = 0;
+      let min = 0;
+      let par = 0;
+      parts.forEach((p) => {
+        const reg = findRosterEntry(p.convocatoria, jug);
+        if (reg && reg.estado === 'AS') {
+          par++;
+          gol += parseInt(reg.goles, 10) || 0;
+          min += parseMinutosToSeconds(reg.minutos);
+        }
+      });
+      const entPct = ents.length > 0 ? Math.round((ent / ents.length) * 100) : null;
+      return { gol, min, entPct };
+    };
+
+    return listaJugadores.map((j, idx) => {
+      const a = metrics(j, ent1, par1);
+      const b = metrics(j, ent2, par2);
+      const dGol = b.gol - a.gol;
+      const dMin = b.min - a.min;
+      const dEnt = a.entPct == null || b.entPct == null ? null : b.entPct - a.entPct;
+      return {
+        id: j?.id || `evo-${idx}`,
+        nombre: j?.name || '-',
+        dGol,
+        dMin,
+        dEnt,
+        a,
+        b,
+      };
+    });
+  }, [listaJugadores, entrenosFiltrados, partidosFiltrados, rangeDesde, rangeHasta]);
 
   const htmlStyle = `
     <style>
       body { font-family: sans-serif; padding: 20px; background-color: white; }
-      h1 { color: #012E57; text-align: center; font-size: 18px; }
-      h2 { color: #012E57; border-bottom: 2px solid #1565C0; padding-bottom: 5px; text-align: center; font-size: 14px; }
+      h1 { color: ${REPORT_BRAND.navy}; text-align: center; font-size: 18px; }
+      h2 { color: ${REPORT_BRAND.navy}; border-bottom: 2px solid ${REPORT_BRAND.blue}; padding-bottom: 5px; text-align: center; font-size: 14px; }
       table { width: 100%; border-collapse: collapse; margin-bottom: 20px; table-layout: fixed; font-size: 10px; }
       th, td { border: 1px solid #CCC; padding: 6px; text-align: center; }
-      th { background-color: #012E57; color: white; }
+      th { background-color: ${REPORT_BRAND.navy}; color: white; }
       .name-col { text-align: left; font-weight: bold; background-color: #F9F9F9; }
       .name-col-entrenos { text-align: left; font-weight: bold; background-color: #F9F9F9; min-width: 180px; white-space: nowrap; }
       table.table-entrenos { table-layout: auto; }
@@ -238,15 +454,33 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
 
   const handleExport = async () => {
     if (sharingRef.current) return;
+    if (rangeDesde > rangeHasta) {
+      Alert.alert('Fechas', 'La fecha desde no puede ser posterior a la fecha hasta.');
+      return;
+    }
     try {
       sharingRef.current = true;
       let content = '';
-      const headerBase = `<h1 style="text-align:center; color:#012E57;">ESTADÍSTICAS DEL EQUIPO</h1>`;
+      const fmtRango = (ymd) => {
+        const d = parseToDate(ymd);
+        return (d && formatDateExport(d)) || String(ymd || '');
+      };
+      const periodoHtml = `<p style="font-size:10px;color:#555;text-align:center;margin:0 0 10px;">Periodo del informe: ${fmtRango(rangeDesde)} – ${fmtRango(rangeHasta)}</p>`;
+      const headerBase =
+        buildReportHeaderHtml({
+          title: 'ESTADÍSTICAS DEL EQUIPO',
+          escudoUri,
+          equipo: equipoNombre,
+          temporada: temporadaNombre,
+        }) + periodoHtml;
 
       if (activeTab === 'ENTRENOS') {
         // Exportación pestaña ENTRENOS: primera columna nombre completo (ancha, una línea); 10 columnas de sesiones por página
         if (entrenosOrdenados.length === 0) {
-          content = `<div>${headerBase}<p>No hay entrenos registrados.</p></div>`;
+          content =
+            (entrenos || []).length === 0
+              ? `<div>${headerBase}<p>No hay entrenos registrados.</p></div>`
+              : `<div>${headerBase}<p>No hay entrenos en el periodo seleccionado.</p></div>`;
         } else {
           const SESSION_COLS = 10;
           const nominal = (p) => (p.nominal && String(p.nominal).trim()) || (p.name || '-');
@@ -275,14 +509,14 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
             const numCols = 1 + chunk.length;
             const rowJug = listaJugadores.map(p => {
               const celdas = chunk.map(e => {
-                const st = (e.asistencia || []).find(a => a.id === p.id);
+                const st = findRosterEntry(e.asistencia, p);
                 return `<td>${st?.estado || '-'}</td>`;
               }).join('');
               return `<tr><td class="name-col-entrenos">${nominal(p)}</td>${celdas}</tr>`;
             }).join('');
             const rowStaff = listaStaff.map(p => {
               const celdas = chunk.map(e => {
-                const st = (e.asistencia || []).find(a => a.id === p.id);
+                const st = findRosterEntry(e.asistencia, p);
                 return `<td>${st?.estado || '-'}</td>`;
               }).join('');
               return `<tr><td class="name-col-entrenos">${nominal(p)}</td>${celdas}</tr>`;
@@ -292,7 +526,13 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
             chunks.push(tableHtml);
           }
             const intro = headerBase + '<h2>Asistencia a entrenamientos</h2><p style="font-size:10px;color:#666;">Sesiones ordenadas de más antigua (izquierda) a más reciente (derecha). Salto de página cada 10 sesiones.</p>' + resumenObjetivos;
-            const blocks = chunks.map((html, idx) => (idx === 0 ? `<div>${intro}${html}</div>` : `<div>${html}</div>`) + (idx < chunks.length - 1 ? '<div class="page-break"></div>' : '')).join('');
+            const blocks = chunks
+              .map((html, idx) => {
+                const block = idx === 0 ? `<div>${intro}${html}</div>` : `<div>${html}</div>`;
+                const brk = idx < chunks.length - 1 ? '<div class="page-break"></div>' : '';
+                return block + brk;
+              })
+              .join('');
             content = `<div>${blocks}</div>`;
         }
       }
@@ -310,7 +550,7 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
 
         content = partidosOrdenados.map((pa, i) => {
           const rows = (pa.convocatoria || []).map(reg => {
-            const jug = [...listaJugadores, ...listaStaff].find(p => p.id === reg.id);
+            const jug = [...listaJugadores, ...listaStaff].find((p) => samePerson(reg, p));
             const nombre = (jug && ((jug.nominal && String(jug.nominal).trim()) || jug.name)) || reg.name || '-';
             return `<tr><td class="name-col">${nombre}</td><td>${reg.estado || '-'}</td><td>${reg.esCapitan ? 'Sí' : '-'}</td><td>${reg.goles ?? 0}</td><td>${formatTiempoJugado(parseMinutosToSeconds(reg.minutos))}</td></tr>`;
           }).join('');
@@ -325,7 +565,7 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
             const convIds = (pa.convocatoria || []).map(c => c.id);
             const headerPeriodos = Array.from({ length: totalPeriodos }, (_, j) => `<th>P${j + 1}</th>`).join('');
             const filasTiempos = convIds.map(id => {
-              const jug = [...listaJugadores, ...listaStaff].find(p => p.id === id);
+              const jug = [...listaJugadores, ...listaStaff].find((p) => samePerson({ id }, p));
               const nombre = (jug && ((jug.nominal && String(jug.nominal).trim()) || jug.name)) || '-';
               const segs = tiempos[id] || [];
               const celdas = Array.from({ length: totalPeriodos }, (_, j) => `<td>${formatTime(segs[j])}</td>`).join('');
@@ -362,18 +602,23 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
               <div>${pagina3}</div>
             </div>${pageBreakBetweenPartidos}`;
         }).join('');
-        if (!content && partidosList.length === 0) content = `<div>${headerBase}<p>No hay partidos registrados.</p></div>`;
+        if (!content && partidosFiltrados.length === 0) {
+          content =
+            partidosList.length === 0
+              ? `<div>${headerBase}<p>No hay partidos registrados.</p></div>`
+              : `<div>${headerBase}<p>No hay partidos en el periodo seleccionado.</p></div>`;
+        }
       }
 
       else if (activeTab === 'RESUMEN') {
         // Exportación pestaña RESUMEN: incluye Dedicación global = (Ent + Par) / (Total Ent + Total Par)
         const rows = [...statsCalculadas.jugadores, ...statsCalculadas.staff].map((s, idx) => {
           const j = [...listaJugadores, ...listaStaff][idx];
-          const entN = `${s.global.ent}/${entrenos.length}`;
-          const entP = entrenos.length > 0 ? Math.round((s.global.ent / entrenos.length) * 100) + '%' : '0%';
-          const parN = `${s.global.par}/${partidosList.length}`;
-          const parP = partidosList.length > 0 ? Math.round((s.global.par / partidosList.length) * 100) + '%' : '0%';
-          const dedP = calcDedicacionGlobalPct(s.global.ent, entrenos.length, s.global.par, partidosList.length) + '%';
+          const entN = `${s.global.ent}/${entrenosFiltrados.length}`;
+          const entP = entrenosFiltrados.length > 0 ? Math.round((s.global.ent / entrenosFiltrados.length) * 100) + '%' : '0%';
+          const parN = `${s.global.par}/${partidosFiltrados.length}`;
+          const parP = partidosFiltrados.length > 0 ? Math.round((s.global.par / partidosFiltrados.length) * 100) + '%' : '0%';
+          const dedP = calcDedicacionGlobalPct(s.global.ent, entrenosFiltrados.length, s.global.par, partidosFiltrados.length) + '%';
           const goles = j?.role === 'Jugador' ? s.global.gol : '-';
           const cap = j?.role === 'Jugador' ? s.global.cap : '-';
           const mins = j?.role === 'Jugador' ? formatTiempoJugado(s.global.min) : '-';
@@ -389,20 +634,26 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
 
       else if (activeTab === 'DI') {
         const rows = rowsValoraciones
-          .map((r) => `<tr><td class="name-col">${r.nombre}</td><td>${r.rol}</td><td>${r.valoracionIA == null ? '-' : r.valoracionIA}</td><td>${r.diGlobal == null ? '-' : r.diGlobal}</td><td>${r.personal == null ? '-' : r.personal}</td><td>${r.fechaPersonal || '-'}</td></tr>`)
+          .map((r) => `<tr><td class="name-col">${r.nombre}</td><td>${r.rol}</td><td>${r.valoracionIA == null ? '-' : r.valoracionIA}</td><td>${r.diGlobal == null ? '-' : r.diGlobal}</td><td>${r.ultima == null ? '-' : r.ultima}</td><td>${r.anterior == null ? '-' : r.anterior}</td><td>${formatDelta(r.delta)}</td><td>${r.nEvals || 0}</td><td>${r.serieTxt || '-'}</td></tr>`)
+          .join('');
+        const evoRows = rowsEvolucionRendimiento
+          .map((r) => `<tr><td class="name-col">${r.nombre}</td><td>${formatDelta(r.dGol)}</td><td>${formatDelta(r.dEnt)}${r.dEnt == null ? '' : ' pp'}</td><td>${r.dMin === 0 ? '0' : (r.dMin > 0 ? '+' : '') + formatTiempoJugado(Math.abs(r.dMin))}${r.dMin < 0 ? ' (↓)' : r.dMin > 0 ? ' (↑)' : ''}</td></tr>`)
           .join('');
         content = `
           <div>
             ${headerBase}
-            <h2>Valoraciones D.I. y Evaluación personal</h2>
-            <table><thead><tr><th class="name-col">Nombre</th><th>Rol</th><th>Valoración IA</th><th>D.I. global</th><th>Eval. personal</th><th>Fecha última eval. personal</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Sin datos</td></tr>'}</tbody></table>
+            <h2>Valoraciones D.I. – evolución</h2>
+            <table><thead><tr><th class="name-col">Nombre</th><th>Rol</th><th>IA</th><th>DI media</th><th>Última</th><th>Anterior</th><th>Δ</th><th>N</th><th>Serie</th></tr></thead><tbody>${rows || '<tr><td colspan="9">Sin datos</td></tr>'}</tbody></table>
+            <h2>Rendimiento 1ª vs 2ª mitad del periodo</h2>
+            <table><thead><tr><th class="name-col">Nombre</th><th>Δ Goles</th><th>Δ Ent %</th><th>Δ Minutos</th></tr></thead><tbody>${evoRows || '<tr><td colspan="4">Sin datos</td></tr>'}</tbody></table>
           </div>`;
       }
 
       else if (activeTab === 'COMPETICION') {
         // Exportación pestaña FINAL/COMPETICIÓN: mismas tablas y columnas que la pantalla
-        if (!statsCalculadas?.resComp?.length || !statsCalculadas?.jugadores || !statsCalculadas?.local || !statsCalculadas?.visita) {
-          content = `<div>${headerBase}<p>Sin datos suficientes para exportar el informe Final/Competición.</p></div>`;
+        const jugExp = statsCalculadas?.jugadores || [];
+        if (!statsCalculadas?.resComp?.length || !statsCalculadas?.local || !statsCalculadas?.visita || jugExp.length === 0) {
+          content = `<div>${headerBase}<p>Sin datos suficientes para exportar el informe Final/Competición (se necesita al menos un jugador en plantilla).</p></div>`;
         } else {
           const sheets = [];
           const resCompMap = {};
@@ -486,12 +737,12 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
             ${headerBase}
             <h2>4. Rendimiento individual – General</h2>
             <table><thead><tr><th class="name-col">Jugador</th><th>Entrenos</th><th>Partidos</th><th>Goles</th><th>Cap.</th><th>Tiempo</th></tr></thead>
-            <tbody>${statsCalculadas.jugadores.map(j => `<tr><td class="name-col">${j.name}</td><td>${j.global?.ent ?? 0}/${entrenos.length}</td><td>${j.global?.par ?? 0}/${partidosList.length}</td><td>${j.global?.gol ?? 0}</td><td>${j.global?.cap ?? 0}</td><td>${formatTiempoJugado(j.global?.min ?? 0)}</td></tr>`).join('')}</tbody></table>
+            <tbody>${statsCalculadas.jugadores.map(j => `<tr><td class="name-col">${j.name}</td><td>${j.global?.ent ?? 0}/${entrenosFiltrados.length}</td><td>${j.global?.par ?? 0}/${partidosFiltrados.length}</td><td>${j.global?.gol ?? 0}</td><td>${j.global?.cap ?? 0}</td><td>${formatTiempoJugado(j.global?.min ?? 0)}</td></tr>`).join('')}</tbody></table>
           </div>`);
 
           // 5. Rendimiento individual por competición (igual que pantalla)
-          todasLasComps.forEach(c => {
-            const partidosComp = partidosList.filter(p => (p.tipo?.toUpperCase() || 'LIGA') === c).length;
+            todasLasComps.forEach(c => {
+            const partidosComp = partidosFiltrados.filter(p => (p.tipo?.toUpperCase() || 'LIGA') === c).length;
             sheets.push(`
           <div class="page-break">
             ${headerBase}
@@ -499,13 +750,18 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
             <table><thead><tr><th class="name-col">Jugador</th><th>Entrenos</th><th>Partidos (${c})</th><th>Goles</th><th>Cap.</th><th>Tiempo</th></tr></thead>
             <tbody>${statsCalculadas.jugadores.map(j => {
               const pc = (j.porComp || []).find(pc => pc.nombre === c);
-              return `<tr><td class="name-col">${j.name}</td><td>${j.global?.ent ?? 0}/${entrenos.length}</td><td>${pc?.par ?? 0}/${partidosComp}</td><td>${pc?.gol ?? 0}</td><td>${pc?.cap ?? 0}</td><td>${formatTiempoJugado(pc?.min ?? 0)}</td></tr>`;
+              return `<tr><td class="name-col">${j.name}</td><td>${j.global?.ent ?? 0}/${entrenosFiltrados.length}</td><td>${pc?.par ?? 0}/${partidosComp}</td><td>${pc?.gol ?? 0}</td><td>${pc?.cap ?? 0}</td><td>${formatTiempoJugado(pc?.min ?? 0)}</td></tr>`;
             }).join('')}</tbody></table>
           </div>`);
           });
 
           content = sheets.join('');
         }
+      }
+
+      if (!String(content || '').trim()) {
+        Alert.alert('Exportar', 'No hay contenido para generar el PDF en esta pestaña.');
+        return;
       }
 
       const html = `<html><head>${htmlStyle}</head><body>${content}</body></html>`;
@@ -521,17 +777,17 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
   const renderFilaDatos = (p, idx, isStaff) => (
     <View key={p.id} style={[styles.dataRow, { height: ROW_HEIGHT }]}>
       {activeTab === 'ENTRENOS' && entrenosOrdenados.map(e => {
-        const st = (e.asistencia || []).find(a => a.id === p.id);
+        const st = findRosterEntry(e.asistencia, p);
         const color = st?.estado === 'AS' ? '#2E7D32' : st?.estado === 'AV' ? '#E65100' : st?.estado === 'NA' ? '#B71C1C' : '#333';
         return (
-          <View key={e.id} style={[styles.cell, { width: ENT_COL_W }]}>
+          <View key={e.id} style={[styles.cell, { width: gridCol.entColW }]}>
             <View style={[styles.badge, {backgroundColor: color}]}><Text style={styles.badgeTxt}>{st?.estado || '-'}</Text></View>
           </View>
         );
       })}
 
       {activeTab === 'PARTIDOS' && partidosOrdenados.map(pa => {
-        const c = pa.convocatoria?.find(conv => conv.id === p.id);
+        const c = findRosterEntry(pa.convocatoria, p);
         const getAsistColor = (estado) => {
           if (estado === 'AS') return '#2E7D32';
           if (estado === 'AV') return '#E65100';
@@ -540,8 +796,8 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
         };
 
         return (
-          <View key={pa.id} style={{ flexDirection: 'row', width: MATCH_COL_W, borderLeftWidth: 1, borderColor: '#012E57' }}>
-            <View style={styles.subCol}>
+          <View key={pa.id} style={{ flexDirection: 'row', width: gridCol.matchColW, borderLeftWidth: 1, borderColor: '#012E57' }}>
+            <View style={[styles.subCol, { width: gridCol.subColW }]}>
               <TouchableOpacity 
                 onPress={() => abrirActa(pa.acta, pa.rival)}
                 style={[styles.miniBadge, { backgroundColor: getAsistColor(c?.estado) }]}
@@ -549,26 +805,26 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
                 <Text style={styles.subColTxt}>{c?.estado || '-'}</Text>
               </TouchableOpacity>
             </View>
-            <View style={styles.subCol}><Text style={[styles.subColTxt, c?.esCapitan && { color: '#FFD700', fontWeight: 'bold' }]}>{c?.esCapitan ? 'C' : '-'}</Text></View>
-            <View style={styles.subCol}><Text style={[styles.subColTxt, (c?.goles > 0) && { color: '#00FF00', fontWeight: 'bold' }]}>{c?.goles || 0}</Text></View>
-            <View style={styles.subCol}><Text style={[styles.subColTxt, { fontSize: 9, color: '#AAA' }]}>{formatTiempoJugado(parseMinutosToSeconds(c?.minutos))}</Text></View>
+            <View style={[styles.subCol, { width: gridCol.subColW }]}><Text style={[styles.subColTxt, c?.esCapitan && { color: '#FFD700', fontWeight: 'bold' }]}>{c?.esCapitan ? 'C' : '-'}</Text></View>
+            <View style={[styles.subCol, { width: gridCol.subColW }]}><Text style={[styles.subColTxt, (c?.goles > 0) && { color: '#00FF00', fontWeight: 'bold' }]}>{c?.goles || 0}</Text></View>
+            <View style={[styles.subCol, { width: gridCol.subColW }]}><Text style={[styles.subColTxt, { fontSize: 9, color: '#AAA' }]}>{formatTiempoJugado(parseMinutosToSeconds(c?.minutos))}</Text></View>
           </View>
         );
       })}
 
       {activeTab === 'RESUMEN' && RESUMEN_COLUMNS.map(h => {
         const s = isStaff ? statsCalculadas.staff[idx] : statsCalculadas.jugadores[idx];
-        if (!s || !s.global) return <View key={h} style={[styles.cell, {width: GLOB_COL_W}]}><Text style={styles.globC}>-</Text></View>;
+        if (!s || !s.global) return <View key={h} style={[styles.cell, {width: gridCol.globColW}]}><Text style={styles.globC}>-</Text></View>;
         let val = "-"; let color = "#FFF";
-        if (h === 'ENT(N)') val = `${s.global.ent}/${entrenos.length}`;
-        if (h === 'ENT(%)') { val = entrenos.length > 0 ? Math.round((s.global.ent/entrenos.length)*100)+'%' : '0%'; color='#00D4FF'; }
-        if (h === 'PAR(N)') val = `${s.global.par}/${partidosList.length}`;
-        if (h === 'PAR(%)') { val = partidosList.length > 0 ? Math.round((s.global.par/partidosList.length)*100)+'%' : '0%'; color='#00D4FF'; }
-        if (h === 'DEDIC.') { val = calcDedicacionGlobalPct(s.global.ent, entrenos.length, s.global.par, partidosList.length) + '%'; color = '#4DD0E1'; }
+        if (h === 'ENT(N)') val = `${s.global.ent}/${entrenosFiltrados.length}`;
+        if (h === 'ENT(%)') { val = entrenosFiltrados.length > 0 ? Math.round((s.global.ent/entrenosFiltrados.length)*100)+'%' : '0%'; color='#00D4FF'; }
+        if (h === 'PAR(N)') val = `${s.global.par}/${partidosFiltrados.length}`;
+        if (h === 'PAR(%)') { val = partidosFiltrados.length > 0 ? Math.round((s.global.par/partidosFiltrados.length)*100)+'%' : '0%'; color='#00D4FF'; }
+        if (h === 'DEDIC.') { val = calcDedicacionGlobalPct(s.global.ent, entrenosFiltrados.length, s.global.par, partidosFiltrados.length) + '%'; color = '#4DD0E1'; }
         if (h === 'GOLES') val = !isStaff ? (s.global.gol || 0) : '-';
         if (h === 'CAP') val = !isStaff ? (s.global.cap || 0) : '-';
         if (h === 'MINS') { val = !isStaff ? formatTiempoJugado(s.global.min) : '-'; color='#FFD700'; }
-        return <View key={h} style={[styles.cell, {width: GLOB_COL_W}]}><Text style={[styles.globC, {color}]}>{val}</Text></View>
+        return <View key={h} style={[styles.cell, {width: gridCol.globColW}]}><Text style={[styles.globC, {color}]}>{val}</Text></View>
       })}
     </View>
   );
@@ -590,11 +846,11 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
             ? statsCalculadas.jugadores[idx] 
             : statsCalculadas.staff[idx - listaJugadores.length];
           if (!s?.global) return null;
-          const entN = `${s.global.ent}/${entrenos.length}`;
-          const entP = entrenos.length > 0 ? Math.round((s.global.ent / entrenos.length) * 100) + '%' : '0%';
-          const parN = `${s.global.par}/${partidosList.length}`;
-          const parP = partidosList.length > 0 ? Math.round((s.global.par / partidosList.length) * 100) + '%' : '0%';
-          const dedicacion = calcDedicacionGlobalPct(s.global.ent, entrenos.length, s.global.par, partidosList.length) + '%';
+          const entN = `${s.global.ent}/${entrenosFiltrados.length}`;
+          const entP = entrenosFiltrados.length > 0 ? Math.round((s.global.ent / entrenosFiltrados.length) * 100) + '%' : '0%';
+          const parN = `${s.global.par}/${partidosFiltrados.length}`;
+          const parP = partidosFiltrados.length > 0 ? Math.round((s.global.par / partidosFiltrados.length) * 100) + '%' : '0%';
+          const dedicacion = calcDedicacionGlobalPct(s.global.ent, entrenosFiltrados.length, s.global.par, partidosFiltrados.length) + '%';
           const goles = j?.role === 'Jugador' ? s.global.gol : '-';
           const cap = j?.role === 'Jugador' ? s.global.cap : '-';
           const mins = j?.role === 'Jugador' ? formatTiempoJugado(s.global.min) : '-';
@@ -618,26 +874,76 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
 
   const renderTabValoraciones = () => (
     <ScrollView style={{ flex: 1, padding: 15 }} contentContainerStyle={{ paddingBottom: 100 }} pinchGestureEnabled minimumZoomScale={1} maximumZoomScale={4}>
-      <Text style={styles.sectionTitle}>Valoraciones D.I. y Evaluación personal</Text>
+      <Text style={styles.sectionTitle}>Valoraciones D.I. – evolución</Text>
+      <Text style={styles.diHint}>Toca una fila para ver la serie de las últimas evaluaciones. Δ = última − anterior.</Text>
       <View style={styles.table}>
         <View style={styles.tableHeader}>
           {(compactDiLabels
-            ? ['Nom', 'Rol', 'IA', 'DI', 'E.P.', 'F.ult']
-            : ['Nombre', 'Rol', 'IA', 'DI glob.', 'Eval. pers.', 'F. última']
+            ? ['Nom', 'IA', 'Med', 'Ult', 'Ant', 'Δ', 'N']
+            : ['Nombre', 'IA', 'Media', 'Última', 'Ant.', 'Δ', 'N']
           ).map((h) => (
             <Text key={h} style={[styles.tableHeaderCell, adaptiveTextStyles.tableHeader]} numberOfLines={1}>{h}</Text>
           ))}
         </View>
-        {rowsValoraciones.map((r) => (
-          <View key={r.id} style={styles.tableRow}>
-            <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.nombre}</Text>
-            <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.rol}</Text>
-            <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.valoracionIA == null ? '-' : r.valoracionIA}</Text>
-            <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.diGlobal == null ? '-' : r.diGlobal}</Text>
-            <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.personal == null ? '-' : r.personal}</Text>
-            <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.fechaPersonal || '-'}</Text>
-          </View>
-        ))}
+        {rowsValoraciones.map((r) => {
+          const open = diDetalleId === r.id;
+          const deltaColor = r.delta == null ? '#CFD8DC' : r.delta > 0 ? '#81C784' : r.delta < 0 ? '#E57373' : '#FFD54F';
+          return (
+            <View key={r.id}>
+              <TouchableOpacity
+                style={styles.tableRow}
+                onPress={() => setDiDetalleId(open ? null : r.id)}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.nombre}</Text>
+                <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.valoracionIA == null ? '-' : r.valoracionIA}</Text>
+                <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.diGlobal == null ? '-' : r.diGlobal}</Text>
+                <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.ultima == null ? '-' : r.ultima}</Text>
+                <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.anterior == null ? '-' : r.anterior}</Text>
+                <Text style={[styles.tableCell, adaptiveTextStyles.tableCell, { color: deltaColor, fontWeight: '800' }]} numberOfLines={1}>{formatDelta(r.delta)}</Text>
+                <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.nEvals || 0}</Text>
+              </TouchableOpacity>
+              {open ? (
+                <View style={styles.diSerieBox}>
+                  <Text style={styles.diSerieTxt}>Serie: {r.serieTxt}</Text>
+                  <Text style={styles.diSerieSub}>
+                    Última eval.: {r.fechaUltima || '-'}
+                    {r.personal != null ? ` · Eval. pers.: ${r.personal}/10` : ''}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+
+      <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Rendimiento 1ª vs 2ª mitad del periodo</Text>
+      <Text style={styles.diHint}>Comparativa de la primera mitad del rango de fechas con la segunda (goles, % entreno, minutos).</Text>
+      <View style={styles.table}>
+        <View style={styles.tableHeader}>
+          {(compactDiLabels
+            ? ['Nom', 'ΔGol', 'ΔEnt%', 'ΔMin']
+            : ['Nombre', 'Δ Goles', 'Δ Ent %', 'Δ Minutos']
+          ).map((h) => (
+            <Text key={h} style={[styles.tableHeaderCell, adaptiveTextStyles.tableHeader]} numberOfLines={1}>{h}</Text>
+          ))}
+        </View>
+        {rowsEvolucionRendimiento.map((r) => {
+          const cGol = r.dGol > 0 ? '#81C784' : r.dGol < 0 ? '#E57373' : '#CFD8DC';
+          const cEnt = r.dEnt == null ? '#CFD8DC' : r.dEnt > 0 ? '#81C784' : r.dEnt < 0 ? '#E57373' : '#FFD54F';
+          const cMin = r.dMin > 0 ? '#81C784' : r.dMin < 0 ? '#E57373' : '#CFD8DC';
+          const minLabel = r.dMin === 0
+            ? '0'
+            : `${r.dMin > 0 ? '+' : '−'}${formatTiempoJugado(Math.abs(r.dMin))}`;
+          return (
+            <View key={r.id} style={styles.tableRow}>
+              <Text style={[styles.tableCell, adaptiveTextStyles.tableCell]} numberOfLines={1}>{r.nombre}</Text>
+              <Text style={[styles.tableCell, adaptiveTextStyles.tableCell, { color: cGol, fontWeight: '700' }]} numberOfLines={1}>{formatDelta(r.dGol)}</Text>
+              <Text style={[styles.tableCell, adaptiveTextStyles.tableCell, { color: cEnt, fontWeight: '700' }]} numberOfLines={1}>{r.dEnt == null ? '-' : `${formatDelta(r.dEnt)}pp`}</Text>
+              <Text style={[styles.tableCell, adaptiveTextStyles.tableCell, { color: cMin, fontWeight: '700' }]} numberOfLines={1}>{minLabel}</Text>
+            </View>
+          );
+        })}
       </View>
     </ScrollView>
   );
@@ -651,6 +957,30 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
           </Text>
           <Text style={{ color: '#78909C', fontSize: 12, textAlign: 'center' }}>
             Importa desde Menú → Gestión de datos (configura el ID de tu libro y pulsa Importar en Partidos) o añade partidos en la pestaña Partidos.
+          </Text>
+        </View>
+      );
+    }
+    if (activeTab === 'PARTIDOS' && partidosList.length > 0 && partidosFiltrados.length === 0) {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+          <Text style={{ color: '#B0BEC5', fontSize: 14, textAlign: 'center', marginBottom: 8 }}>
+            No hay partidos en el periodo seleccionado.
+          </Text>
+          <Text style={{ color: '#78909C', fontSize: 12, textAlign: 'center' }}>
+            Amplía el rango de fechas arriba o pulsa «Todo».
+          </Text>
+        </View>
+      );
+    }
+    if (activeTab === 'ENTRENOS' && (entrenos || []).length > 0 && entrenosFiltrados.length === 0) {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+          <Text style={{ color: '#B0BEC5', fontSize: 14, textAlign: 'center', marginBottom: 8 }}>
+            No hay entrenos en el periodo seleccionado.
+          </Text>
+          <Text style={{ color: '#78909C', fontSize: 12, textAlign: 'center' }}>
+            Amplía el rango de fechas arriba o pulsa «Todo el histórico cargado».
           </Text>
         </View>
       );
@@ -675,32 +1005,59 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
 
     return (
       <View style={{flex:1, flexDirection: 'row'}}>
-        <View style={{width: FIX_NAME_W, zIndex: 10, backgroundColor: '#001A33', borderRightWidth: 1, borderColor: '#1565C0'}}>
-            <View style={[styles.headerCell, {height: hH}]}><Text style={styles.headerLabel}>NOMBRE</Text></View>
+        <View style={{width: gridCol.fixNameW, zIndex: 10, backgroundColor: '#001A33', borderRightWidth: 1, borderColor: '#1565C0'}}>
+            <View style={[styles.headerCell, { height: hH }]}>
+              <Text style={styles.headerLabel}>NOMBRE</Text>
+              {activeTab === 'ENTRENOS' ? <Text style={styles.headerPctLabel}>%</Text> : null}
+            </View>
           <ScrollView ref={leftRef} bounces={false} showsVerticalScrollIndicator={false} scrollEventThrottle={16} pinchGestureEnabled minimumZoomScale={1} maximumZoomScale={4}
             onScrollBeginDrag={() => activeScroll.current = 'left'} onScroll={handleScrollLeft}
             contentContainerStyle={{ paddingBottom: 100 }}>
-            <View style={styles.sectHeader}><Text style={styles.sectTitle}>JUGADORES</Text></View>
-            {listaJugadores.map(p => <View key={p.id} style={[styles.nameRow, {height: ROW_HEIGHT}]}><Text style={styles.nameTxt} numberOfLines={1}>{p.name}</Text></View>)}
-            <View style={styles.sectHeader}><Text style={styles.sectTitle}>STAFF</Text></View>
-            {listaStaff.map(p => <View key={p.id} style={[styles.nameRow, {height: ROW_HEIGHT}]}><Text style={styles.nameTxt} numberOfLines={1}>{p.name}</Text></View>)}
-            {activeTab === 'ENTRENOS' && !!resumenObjetivosTexto && (
-              <View style={{ padding: 6 }}>
+            {activeTab === 'ENTRENOS' && !!resumenObjetivosTexto ? (
+              <View style={styles.objetivosTopBox}>
                 <Text style={styles.objetivosResumenTxt}>
-                  🎯 Objetivos tácticos más trabajados: {resumenObjetivosTexto}
+                  Objetivos tácticos (separados por coma): {resumenObjetivosTexto}
                 </Text>
               </View>
-            )}
+            ) : null}
+            <View style={styles.sectHeader}><Text style={styles.sectTitle}>JUGADORES</Text></View>
+            {listaJugadores.map((p, idx) => {
+              const s = statsCalculadas.jugadores[idx];
+              const pct =
+                activeTab === 'ENTRENOS' && entrenosFiltrados.length > 0 && s?.global
+                  ? Math.round((s.global.ent / entrenosFiltrados.length) * 100)
+                  : null;
+              return (
+                <View key={p.id} style={[styles.nameRow, { height: ROW_HEIGHT }]}>
+                  <Text style={styles.nameTxt} numberOfLines={1}>{p.name}</Text>
+                  {pct != null ? <Text style={styles.entPctTxt}>{pct}%</Text> : null}
+                </View>
+              );
+            })}
+            <View style={styles.sectHeader}><Text style={styles.sectTitle}>STAFF</Text></View>
+            {listaStaff.map((p, idx) => {
+              const s = statsCalculadas.staff[idx];
+              const pct =
+                activeTab === 'ENTRENOS' && entrenosFiltrados.length > 0 && s?.global
+                  ? Math.round((s.global.ent / entrenosFiltrados.length) * 100)
+                  : null;
+              return (
+                <View key={p.id} style={[styles.nameRow, { height: ROW_HEIGHT }]}>
+                  <Text style={styles.nameTxt} numberOfLines={1}>{p.name}</Text>
+                  {pct != null ? <Text style={styles.entPctTxt}>{pct}%</Text> : null}
+                </View>
+              );
+            })}
           </ScrollView>
         </View>
         <ScrollView horizontal bounces={false}>
           <View>
             <View style={[styles.tableHeader, { height: hH }]}>
               {activeTab === 'ENTRENOS' ? entrenosOrdenados.map(e => (
-                <View key={e.id} style={[styles.dateCol, { width: ENT_COL_W }]}>
+                <View key={e.id} style={[styles.dateCol, { width: gridCol.entColW }]}>
                   <Text style={styles.dateTxt}>{formatDateExport(parseToDate(e.fecha)) || e.fecha}</Text>
                   <View style={styles.actionRow}>
-                    <TouchableOpacity onPress={() => onEditSession(e, 'ENT')} style={styles.miniBtn}><Text style={styles.miniBtnTxt}>E</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => onEditSession?.(e, 'ENT')} style={styles.miniBtn}><Text style={styles.miniBtnTxt}>E</Text></TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => {
                         Alert.alert(
@@ -708,7 +1065,7 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
                           `¿Eliminar la sesión de entrenamiento del ${formatDateExport(parseToDate(e.fecha)) || e.fecha || 'esta fecha'}?`,
                           [
                             { text: 'Cancelar', style: 'cancel' },
-                            { text: 'Eliminar', style: 'destructive', onPress: () => onDeleteSession(e.id, 'ENT') }
+                            { text: 'Eliminar', style: 'destructive', onPress: () => onDeleteSession?.(e.id, 'ENT') }
                           ]
                         );
                       }}
@@ -719,7 +1076,7 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
                   </View>
                 </View>
               )) : activeTab === 'PARTIDOS' ? partidosOrdenados.map(p => (
-                  <View key={p.id} style={[styles.matchHeaderCol, { width: MATCH_COL_W }]}>
+                  <View key={p.id} style={[styles.matchHeaderCol, { width: gridCol.matchColW }]}>
                     <Text style={styles.tipoCompTxt}>{p.tipo || 'LIGA'}</Text>
                     <Text style={styles.rivalTxt} numberOfLines={1}>{p.rival}</Text>
                     <Text style={styles.lugarTxt}>{p.lugar === 'VISITANTE' ? 'VISIT.' : 'LOCAL'}</Text>
@@ -746,10 +1103,15 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
                         <Text style={styles.miniBtnTxt}>X</Text>
                       </TouchableOpacity>
                     </View>
-                    <View style={styles.subHeaderRow}><Text style={styles.subH}>AS</Text><Text style={styles.subH}>C</Text><Text style={styles.subH}>G</Text><Text style={styles.subH}>MIN</Text></View>
+                    <View style={styles.subHeaderRow}>
+                      <Text style={[styles.subH, { width: gridCol.subColW }]}>AS</Text>
+                      <Text style={[styles.subH, { width: gridCol.subColW }]}>C</Text>
+                      <Text style={[styles.subH, { width: gridCol.subColW }]}>G</Text>
+                      <Text style={[styles.subH, { width: gridCol.subColW }]}>MIN</Text>
+                    </View>
                   </View>
               )) : RESUMEN_COLUMNS.map(h => (
-                 <View key={h} style={[styles.dateCol, { width: GLOB_COL_W }]}><Text style={styles.globH}>{h}</Text></View>
+                 <View key={h} style={[styles.dateCol, { width: gridCol.globColW }]}><Text style={styles.globH}>{h}</Text></View>
               ))}
             </View>
             <ScrollView ref={rightRef} bounces={false} showsVerticalScrollIndicator={false} scrollEventThrottle={16} pinchGestureEnabled minimumZoomScale={1} maximumZoomScale={4}
@@ -766,7 +1128,7 @@ export default function Stats({ players = [], entrenos = [], partidos = [], onBa
     );
   };
 const renderTabFinal = () => {
-  if (!statsCalculadas?.resComp || !statsCalculadas?.jugadores || !statsCalculadas?.local || !statsCalculadas?.visita) {
+  if (!statsCalculadas?.resComp?.length || !statsCalculadas?.jugadores?.length || !statsCalculadas?.local || !statsCalculadas?.visita) {
     return (
       <ScrollView style={{ flex: 1, padding: 15 }} contentContainerStyle={{ paddingBottom: 100 }} pinchGestureEnabled minimumZoomScale={1} maximumZoomScale={4}>
         <Text style={styles.sectionTitle}>Rendimiento del Equipo</Text>
@@ -904,8 +1266,8 @@ const renderTabFinal = () => {
         {statsCalculadas.jugadores.map(j => (
           <View key={j.id} style={styles.tableRow}>
             <Text style={styles.tableCell}>{j.name}</Text>
-            <Text style={styles.tableCell}>{`${j.global?.ent ?? 0}/${entrenos.length}`}</Text>
-            <Text style={styles.tableCell}>{`${j.global?.par ?? 0}/${partidosList.length}`}</Text>
+            <Text style={styles.tableCell}>{`${j.global?.ent ?? 0}/${entrenosFiltrados.length}`}</Text>
+            <Text style={styles.tableCell}>{`${j.global?.par ?? 0}/${partidosFiltrados.length}`}</Text>
             <Text style={styles.tableCell}>{j.global?.gol ?? 0}</Text>
             <Text style={styles.tableCell}>{j.global?.cap ?? 0}</Text>
             <Text style={styles.tableCell}>
@@ -925,11 +1287,11 @@ const renderTabFinal = () => {
             </View>
             {statsCalculadas.jugadores.map(j => {
               const pc = j.porComp.find(pc => pc.nombre===c);
-              const partidosComp = partidosList.filter(p => (p.tipo?.toUpperCase()||'LIGA')===c).length;
+              const partidosComp = partidosFiltrados.filter(p => (p.tipo?.toUpperCase()||'LIGA')===c).length;
               return (
                 <View key={j.id} style={styles.tableRow}>
                   <Text style={styles.tableCell}>{j.name}</Text>
-                  <Text style={styles.tableCell}>{`${j.global?.ent ?? 0}/${entrenos.length}`}</Text>
+                  <Text style={styles.tableCell}>{`${j.global?.ent ?? 0}/${entrenosFiltrados.length}`}</Text>
                   <Text style={styles.tableCell}>{`${pc?.par ?? 0}/${partidosComp}`}</Text>
                   <Text style={styles.tableCell}>{pc?.gol || 0}</Text>
                   <Text style={styles.tableCell}>{pc?.cap || 0}</Text>
@@ -945,13 +1307,18 @@ const renderTabFinal = () => {
   );
 };
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingHorizontal: screen.horizontalPadding }]}>
       <View style={styles.headerNav}>
         <Text style={styles.title}>ESTADÍSTICAS</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={onBack} style={styles.exitTopBtn}>
             <Text style={styles.exitTopBtnTxt}>SALIR</Text>
           </TouchableOpacity>
+          {typeof onOpenBiblioteca === 'function' ? (
+            <TouchableOpacity onPress={onOpenBiblioteca} style={styles.biblioTopBtn}>
+              <Text style={styles.biblioTopBtnTxt}>BIBLIOTECA</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity onPress={handleExport} style={styles.exportTopBtn}>
             <Text style={styles.exportTopBtnTxt}>EXPORTAR</Text>
           </TouchableOpacity>
@@ -964,7 +1331,46 @@ const renderTabFinal = () => {
           </TouchableOpacity>
         ))}
       </View>
-      
+      <View style={styles.statsFilterBar}>
+        <Text style={styles.statsFilterHint}>Periodo · toca la fecha para abrir el calendario</Text>
+        <View style={styles.statsFilterRow}>
+          <Text style={styles.statsFilterLbl}>Desde</Text>
+          <YmdDatePickerField
+            value={statsDesdeInput}
+            onChange={setStatsDesdeInput}
+            minimumDate={dataDateBounds.min}
+            maximumDate={
+              statsHastaInput.trim() && isValidYmd(statsHastaInput.trim())
+                ? statsHastaInput.trim()
+                : dataDateBounds.max
+            }
+            variant="dark"
+          />
+          <Text style={styles.statsFilterLbl}>Hasta</Text>
+          <YmdDatePickerField
+            value={statsHastaInput}
+            onChange={setStatsHastaInput}
+            minimumDate={
+              statsDesdeInput.trim() && isValidYmd(statsDesdeInput.trim())
+                ? statsDesdeInput.trim()
+                : dataDateBounds.min
+            }
+            variant="dark"
+          />
+          {dataDateBounds.min && dataDateBounds.max ? (
+            <TouchableOpacity
+              style={styles.statsFilterResetBtn}
+              onPress={() => {
+                setStatsDesdeInput(dataDateBounds.min);
+                setStatsHastaInput(dataDateBounds.max);
+              }}
+            >
+              <Text style={styles.statsFilterResetTxt}>Todo</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+
       {activeTab === 'COMPETICION'
         ? renderTabFinal()
         : activeTab === 'DI'
@@ -1014,7 +1420,7 @@ const renderTabFinal = () => {
                 >
                   <Image
                     source={{ uri: actaSeleccionada.uri }}
-                    style={styles.modalActaImage}
+                    style={[styles.modalActaImage, { minHeight: Math.min(520, Math.max(200, height * 0.42)) }]}
                     resizeMode="contain"
                   />
                 </ScrollView>
@@ -1038,16 +1444,42 @@ const styles = StyleSheet.create({
   exitTopBtnTxt: { color: '#FFFFFF', fontSize: 10, fontWeight: 'bold' },
   exportTopBtn: { flex: 1, backgroundColor: '#1565C0', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
   exportTopBtnTxt: { color: '#FFFFFF', fontSize: 10, fontWeight: 'bold' },
+  biblioTopBtn: { flex: 1, backgroundColor: '#FFD166', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  biblioTopBtnTxt: { color: '#001A33', fontSize: 9, fontWeight: 'bold' },
   tabContainer: { flexDirection: 'row', backgroundColor: '#012E57', padding: 5, gap: 4 },
   tab: { flex: 1, padding: 10, alignItems: 'center', borderRadius: 8, backgroundColor: '#001A33' },
   activeTab: { backgroundColor: '#1565C0' },
   tabTxt: { color: '#FFF', fontSize: 8, fontWeight: 'bold' },
+  statsFilterBar: { backgroundColor: '#001326', paddingHorizontal: 10, paddingVertical: 8, borderBottomWidth: 1, borderColor: '#1565C0' },
+  statsFilterHint: { color: '#B0BEC5', fontSize: 9, marginBottom: 6 },
+  statsFilterRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap', gap: 4 },
+  statsFilterLbl: { color: '#00aaff', fontSize: 9, fontWeight: '600', flexShrink: 0 },
+  statsFilterResetBtn: { backgroundColor: '#37474F', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 8, marginLeft: 2, flexShrink: 0 },
+  statsFilterResetTxt: { color: '#ECEFF1', fontSize: 10, fontWeight: '700' },
   headerCell: { backgroundColor: '#012E57', justifyContent: 'center', padding: 10, borderBottomWidth: 1, borderColor: '#1565C0' },
   headerLabel: { color: '#00aaff', fontSize: 10, fontWeight: 'bold' },
   sectHeader: { height: SECTION_SPACER_H, backgroundColor: '#001326', justifyContent: 'center', paddingHorizontal: 10 },
   sectTitle: { color: '#1565C0', fontSize: 10, fontWeight: 'bold' },
-  nameRow: { justifyContent: 'center', paddingHorizontal: 10, borderBottomWidth: 0.5, borderColor: '#012E57' },
-  nameTxt: { color: '#FFF', fontSize: 11, fontWeight: 'bold' },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    borderBottomWidth: 0.5,
+    borderColor: '#012E57',
+    gap: 4,
+  },
+  nameTxt: { color: '#FFF', fontSize: 11, fontWeight: 'bold', flex: 1, minWidth: 0 },
+  entPctTxt: { color: '#00D4FF', fontSize: 10, fontWeight: '800', minWidth: 32, textAlign: 'right' },
+  headerPctLabel: { color: '#00D4FF', fontSize: 9, fontWeight: '800', marginTop: 2 },
+  objetivosTopBox: {
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    backgroundColor: '#012A4A',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1565C0',
+  },
+  objetivosResumenTxt: { color: '#B0BEC5', fontSize: 10, lineHeight: 13 },
   tableHeader: { flexDirection: 'row', backgroundColor: '#012E57', borderBottomWidth:1, borderColor:'#1565C0' },
   dateCol: { alignItems: 'center', justifyContent: 'center', borderLeftWidth: 1, borderColor: '#012E57' },
   matchHeaderCol: { alignItems: 'center', justifyContent: 'flex-end', borderLeftWidth: 1, borderColor: '#012E57' },
@@ -1064,12 +1496,11 @@ const styles = StyleSheet.create({
   badge: { width: 30, height: 20, borderRadius: 4, justifyContent:'center', alignItems:'center' },
   badgeTxt: { color: '#FFF', fontSize: 9, fontWeight: 'bold' },
   subHeaderRow: { flexDirection: 'row', borderTopWidth: 1, borderColor: '#1565C0', width: '100%' },
-  subH: { width: SUB_COL_W, textAlign: 'center', color: '#00aaff', fontSize: 8, fontWeight: 'bold', paddingVertical: 2 },
-  subCol: { width: SUB_COL_W, justifyContent: 'center', alignItems: 'center' },
+  subH: { textAlign: 'center', color: '#00aaff', fontSize: 8, fontWeight: 'bold', paddingVertical: 2 },
+  subCol: { justifyContent: 'center', alignItems: 'center' },
   subColTxt: { color: '#FFF', fontSize: 10 },
   globH: { color: '#00aaff', fontSize: 8, fontWeight: 'bold', textAlign:'center' },
   globC: { fontSize: 10, fontWeight: 'bold', textAlign:'center' },
-  objetivosResumenTxt: { color: '#B0BEC5', fontSize: 10, marginTop: 4 },
   tipoCompTxt: { color: '#FFFFFF', fontSize: 9, fontWeight: 'bold', textAlign: 'center', marginVertical: 2 },
   miniBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, minWidth: 24, alignItems: 'center' },
   modalFullContainer: { flex: 1, backgroundColor: '#000' },
@@ -1081,7 +1512,7 @@ const styles = StyleSheet.create({
   modalContentActa: { flex: 1, backgroundColor: '#FFF', padding: 8, justifyContent: 'flex-start' },
   modalImageScroll: { flex: 1, width: '100%' },
   modalImageScrollContent: { flexGrow: 1, alignItems: 'center', paddingBottom: 24 },
-  modalActaImage: { width: '100%', minHeight: 480 },
+  modalActaImage: { width: '100%' },
   modalPdfPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalPdfText: { color: '#333', fontSize: 18, fontWeight: 'bold', marginTop: 16 },
   modalPdfSub: { color: '#666', fontSize: 14, marginTop: 8, textAlign: 'center' },
@@ -1094,5 +1525,17 @@ tableRow: { flexDirection:'row', borderTopWidth:1, borderColor:'#1565C0' },
 tableRowSum: { flexDirection:'row', borderTopWidth:1, borderColor:'#1565C0', backgroundColor:'rgba(33,150,243,0.2)' },
 tableCell: { flex:1, padding:5, textAlign:'center', color:'#FFF', fontSize:9 },
 sectionTitle: { color:'#FFD700', fontWeight:'bold', fontSize:14, marginBottom:8 },
+  diHint: { color: '#90A4AE', fontSize: 11, marginBottom: 10, lineHeight: 15 },
+  diSerieBox: {
+    backgroundColor: '#012A4A',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#1565C0',
+  },
+  diSerieTxt: { color: '#E3F2FD', fontSize: 12, fontWeight: '700' },
+  diSerieSub: { color: '#90CAF9', fontSize: 11, marginTop: 4 },
 sectionSubtitle: { color:'#00D4FF', fontWeight:'bold', fontSize:12, marginBottom:4 }
 });

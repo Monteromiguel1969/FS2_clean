@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+﻿import React, { useMemo, useState } from 'react';
 import {
   Alert,
   Image,
@@ -8,8 +8,11 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useScreenMetrics } from '../utils/useScreenMetrics';
+import { isPlayerBlocked, isPlayerDoubt } from '../utils/playerAvailability';
 
 type PlayerItem = {
   id: string;
@@ -18,6 +21,10 @@ type PlayerItem = {
   number?: string | number;
   dorsal?: string | number;
   photo?: string;
+  disponibilidad?: string;
+  estadoFisico?: string;
+  blocked?: boolean;
+  doubt?: boolean;
 };
 
 type Props = {
@@ -30,10 +37,16 @@ const MAX_EN_PISTA = 5;
 
 export default function ConfigurarPartido({ players, onBack, onStartMatch }: Props) {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const screen = useScreenMetrics();
+  const playerCardMinW = useMemo(
+    () => Math.min(64, Math.max(50, Math.floor(width * 0.168))),
+    [width]
+  );
   const jugadores = useMemo<PlayerItem[]>(() => {
     const base = (Array.isArray(players) ? players : []).filter((p: any) => {
       const role = String(p?.role || '').toLowerCase();
-      return role !== 'staff' && role !== 'cuerpo tecnico' && role !== 'cuerpo tecnico';
+      return role !== 'staff' && role !== 'monitor' && role !== 'cuerpo tecnico' && role !== 'cuerpo técnico';
     });
     return base
       .map((p: any, idx) => ({
@@ -43,18 +56,25 @@ export default function ConfigurarPartido({ players, onBack, onStartMatch }: Pro
         number: p?.number,
         dorsal: p?.dorsal,
         photo: p?.photo || p?.foto || p?.image || p?.imagen,
+        disponibilidad: p?.disponibilidad,
+        estadoFisico: p?.estadoFisico,
+        blocked: isPlayerBlocked(p),
+        doubt: isPlayerDoubt(p),
       }))
       .filter((p) => !!p.id);
   }, [players]);
 
-  const idsIniciales = useMemo(() => jugadores.map((j) => j.id), [jugadores]);
-  const maxInicial = Math.min(MAX_EN_PISTA, idsIniciales.length);
+  const idsDisponibles = useMemo(
+    () => jugadores.filter((j) => !j.blocked).map((j) => j.id),
+    [jugadores]
+  );
+  const maxInicial = Math.min(MAX_EN_PISTA, idsDisponibles.length);
 
   const [rival, setRival] = useState('');
   const [duracionParte, setDuracionParte] = useState('20');
   const [numPartes, setNumPartes] = useState('2');
-  const [convocados, setConvocados] = useState<string[]>(idsIniciales);
-  const [enPista, setEnPista] = useState<string[]>(idsIniciales.slice(0, maxInicial));
+  const [convocados, setConvocados] = useState<string[]>(idsDisponibles);
+  const [enPista, setEnPista] = useState<string[]>(idsDisponibles.slice(0, maxInicial));
 
   const getPlayer = (id: string) => jugadores.find((x) => x.id === id);
   const nombreJugador = (id: string) => {
@@ -62,7 +82,7 @@ export default function ConfigurarPartido({ players, onBack, onStartMatch }: Pro
     if (!j) return id;
     const nombre = (j.name || j.nombre || 'Jugador').trim();
     const dorsal = String(j.number ?? j.dorsal ?? '').trim();
-    return dorsal ? `${nombre} #${dorsal}` : nombre;
+    return dorsal ? `${dorsal} ${nombre}` : nombre;
   };
 
   const toggleConvocado = (id: string) => {
@@ -95,6 +115,31 @@ export default function ConfigurarPartido({ players, onBack, onStartMatch }: Pro
   const autoCompletarCinco = () => {
     const limite = Math.min(MAX_EN_PISTA, convocados.length);
     setEnPista(convocados.slice(0, limite));
+  };
+
+  const seleccionarTodos = () => {
+    const ids = jugadores.map((j) => j.id);
+    setConvocados(ids);
+    setEnPista(ids.slice(0, Math.min(MAX_EN_PISTA, ids.length)));
+  };
+
+  const seleccionarNinguno = () => {
+    setConvocados([]);
+    setEnPista([]);
+  };
+
+  /** Solo convocables según plantilla (excluye Lesionado / No disponible). */
+  const aplicarDisponibilidad = () => {
+    const ids = jugadores.filter((j) => !j.blocked).map((j) => j.id);
+    setConvocados(ids);
+    setEnPista(ids.slice(0, Math.min(MAX_EN_PISTA, ids.length)));
+    const excluidos = jugadores.filter((j) => j.blocked).length;
+    if (excluidos > 0) {
+      Alert.alert(
+        'Disponibilidad aplicada',
+        `Convocados ${ids.length}. Excluidos ${excluidos} (lesionado o no disponible). Las dudas siguen convocadas.`
+      );
+    }
   };
 
   const iniciar = () => {
@@ -137,14 +182,35 @@ export default function ConfigurarPartido({ players, onBack, onStartMatch }: Pro
 
   const renderCard = (id: string, selected: boolean, onPress: () => void) => {
     const p = getPlayer(id);
+    const badge =
+      p?.blocked
+        ? (p.estadoFisico === 'Lesionado' ? 'LES' : 'NA')
+        : p?.doubt
+          ? (p.disponibilidad === 'Duda' ? 'DUDA' : 'CAR')
+          : null;
     return (
-      <TouchableOpacity key={id} style={[styles.playerCard, selected && styles.playerCardOn]} onPress={onPress}>
+      <TouchableOpacity
+        key={id}
+        style={[
+          styles.playerCard,
+          { minWidth: playerCardMinW },
+          selected && styles.playerCardOn,
+          p?.blocked && styles.playerCardBlocked,
+          p?.doubt && !selected && styles.playerCardDoubt,
+        ]}
+        onPress={onPress}
+      >
         <View style={styles.photoWrap}>
           {p?.photo ? (
             <Image source={{ uri: p.photo }} style={styles.photo} />
           ) : (
             <Text style={styles.photoFallback}>{String(p?.number ?? p?.dorsal ?? '?')}</Text>
           )}
+          {badge ? (
+            <View style={[styles.dispoBadge, p?.blocked ? styles.dispoBadgeBad : styles.dispoBadgeWarn]}>
+              <Text style={styles.dispoBadgeTxt}>{badge}</Text>
+            </View>
+          ) : null}
         </View>
         <Text style={styles.cardName} numberOfLines={2}>{nombreJugador(id)}</Text>
       </TouchableOpacity>
@@ -152,16 +218,18 @@ export default function ConfigurarPartido({ players, onBack, onStartMatch }: Pro
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={[styles.container, { paddingHorizontal: screen.horizontalPadding }]} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
           <Text style={styles.backTxt}>VOLVER</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>CONFIGURAR PARTIDO</Text>
-        <View style={{ width: 70 }} />
+        <Text style={[styles.title, styles.titleCenter]} numberOfLines={1}>
+          CONFIGURAR PARTIDO
+        </Text>
+        <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingHorizontal: 0 }]}>
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Datos del partido</Text>
 
@@ -175,17 +243,7 @@ export default function ConfigurarPartido({ players, onBack, onStartMatch }: Pro
           />
 
           <View style={styles.row}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Duracion por parte (min)</Text>
-              <TextInput
-                value={duracionParte}
-                onChangeText={setDuracionParte}
-                keyboardType='number-pad'
-                style={styles.input}
-              />
-            </View>
-            <View style={{ width: 12 }} />
-            <View style={{ width: 120 }}>
+            <View style={styles.rowPartCol}>
               <Text style={styles.label}>Partes</Text>
               <TextInput
                 value={numPartes}
@@ -194,11 +252,38 @@ export default function ConfigurarPartido({ players, onBack, onStartMatch }: Pro
                 style={styles.input}
               />
             </View>
+            <View style={styles.rowGap} />
+            <View style={styles.rowMinutesCol}>
+              <Text style={styles.label}>Minutos / parte</Text>
+              <TextInput
+                value={duracionParte}
+                onChangeText={setDuracionParte}
+                keyboardType='number-pad'
+                style={styles.input}
+              />
+            </View>
           </View>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Jugadores disponibles</Text>
+          <View style={[styles.row, { alignItems: 'center', justifyContent: 'space-between' }]}>
+            <Text style={styles.sectionTitle}>Jugadores disponibles</Text>
+            <View style={styles.quickRow}>
+              <TouchableOpacity onPress={aplicarDisponibilidad} style={[styles.autoBtn, styles.autoBtnDispo]}>
+                <Text style={styles.autoTxt}>DISPO</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={seleccionarTodos} style={styles.autoBtn}>
+                <Text style={styles.autoTxt}>TODOS</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={seleccionarNinguno} style={[styles.autoBtn, styles.autoBtnMuted]}>
+                <Text style={styles.autoTxt}>NINGUNO</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <Text style={styles.help}>
+            Convocados: {convocados.length}/{jugadores.length}
+            {jugadores.some((j) => j.blocked) ? ' · DISPO excluye LES/NA' : ''}
+          </Text>
           {jugadores.length === 0 ? (
             <Text style={styles.empty}>No hay jugadores en plantilla.</Text>
           ) : (
@@ -228,7 +313,16 @@ export default function ConfigurarPartido({ players, onBack, onStartMatch }: Pro
         </View>
       </ScrollView>
 
-      <View style={[styles.footer, { bottom: Math.max(insets.bottom + 10, 20) }]}>
+      <View
+        style={[
+          styles.footer,
+          {
+            bottom: Math.max(insets.bottom + 10, 20),
+            left: screen.horizontalPadding,
+            right: screen.horizontalPadding,
+          },
+        ]}
+      >
         <TouchableOpacity onPress={iniciar} style={styles.startBtn}>
           <Text style={styles.startTxt}>INICIAR CRONOMETRO</Text>
         </TouchableOpacity>
@@ -243,14 +337,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
+    paddingHorizontal: 0,
     paddingTop: 4,
     paddingBottom: 10,
   },
-  backBtn: { paddingVertical: 8, paddingHorizontal: 6, width: 70 },
-  backTxt: { color: '#90CAF9', fontWeight: '700' },
+  headerSpacer: { width: 84, height: 1 },
+  backBtn: { paddingVertical: 8, paddingHorizontal: 10, width: 84, borderRadius: 8, backgroundColor: '#0D47A1', alignItems: 'center' },
+  backTxt: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
   title: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
-  scrollContent: { paddingHorizontal: 12, paddingBottom: 180 },
+  titleCenter: { flex: 1, textAlign: 'center', marginHorizontal: 4 },
+  scrollContent: { paddingBottom: 180 },
   card: {
     backgroundColor: '#012A4A',
     borderRadius: 12,
@@ -271,11 +367,14 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     marginBottom: 10,
   },
-  row: { flexDirection: 'row' },
+  row: { flexDirection: 'row', alignItems: 'flex-start' },
+  rowPartCol: { flex: 0.36, minWidth: 0, maxWidth: 140 },
+  rowGap: { width: 10 },
+  rowMinutesCol: { flex: 1, minWidth: 0 },
   cardsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   playerCard: {
     width: '19%',
-    minWidth: 62,
+    minWidth: 50,
     backgroundColor: '#0B3556',
     borderRadius: 9,
     borderWidth: 1,
@@ -286,6 +385,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   playerCardOn: { borderColor: '#4CC9F0', backgroundColor: '#12476D' },
+  playerCardBlocked: { borderColor: '#C62828', opacity: 0.85 },
+  playerCardDoubt: { borderColor: '#FFB300' },
   photoWrap: {
     width: 42,
     height: 50,
@@ -297,6 +398,17 @@ const styles = StyleSheet.create({
   },
   photo: { width: '100%', height: '100%' },
   photoFallback: { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  dispoBadge: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingVertical: 1,
+    alignItems: 'center',
+  },
+  dispoBadgeBad: { backgroundColor: 'rgba(198,40,40,0.92)' },
+  dispoBadgeWarn: { backgroundColor: 'rgba(255,179,0,0.92)' },
+  dispoBadgeTxt: { color: '#FFF', fontSize: 7, fontWeight: '900' },
   cardName: { color: '#EAF4FF', fontSize: 9, marginTop: 4, textAlign: 'center' },
   help: { color: '#8FB1D1', marginBottom: 10 },
   autoBtn: {
@@ -305,12 +417,13 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 7,
   },
+  autoBtnMuted: { backgroundColor: '#455A64' },
+  autoBtnDispo: { backgroundColor: '#2E7D32' },
   autoTxt: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
+  quickRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   empty: { color: '#9CB6CF' },
   footer: {
     position: 'absolute',
-    left: 12,
-    right: 12,
     backgroundColor: '#001A33',
     borderWidth: 1,
     borderColor: '#123E63',

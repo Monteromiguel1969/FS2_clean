@@ -1,0 +1,8 @@
+{
+  "version": "1.4.7",
+  "versionCode": 186,
+  "apkFileName": "futsal-lega-v3-1.4.7-vc186.apk",
+  "apkUrl": "https://futsal-amas-lega.web.app/latest.bin",
+  "changelog": "Calendario: el listado en pantalla y el PDF salen en orden cronológico, de la fecha más antigua a la más reciente.",
+  "updatedAt": "2026-10-05T14:34:22.810Z"
+}

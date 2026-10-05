@@ -2,7 +2,7 @@
   "expo": {
     "name": "Futsal Amas Lega",
     "slug": "futsal-lega-v3",
-    "version": "1.0.58",
+    "version": "1.4.7",
     "owner": "monterohidalgomiguel",
     "orientation": "default",
     "icon": "./assets/icon.png",
@@ -17,11 +17,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.monterohidalgo.futsal.lega.v3",
-      "buildNumber": "56"
+      "buildNumber": "168"
     },
     "android": {
       "package": "com.monterohidalgo.futsal_lega_v3",
-      "versionCode": 59,
+      "versionCode": 186,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#001A33"
@@ -33,15 +33,19 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR",
-        "android.permission.CAMERA",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.READ_CALENDAR",
-        "android.permission.WRITE_CALENDAR"
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "plugins": [
+      "expo-screen-orientation",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#001A33",
+          "defaultChannel": "calendario"
+        }
+      ],
       [
         "expo-image-picker",
         {
@@ -57,15 +61,38 @@
         {
           "calendarPermission": "La aplicación necesita acceso al calendario para guardar partidos y eventos."
         }
-      ]
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "La aplicación necesita el micrófono para comandos de voz en el cronómetro del partido.",
+          "speechRecognitionPermission": "La aplicación necesita reconocimiento de voz para registrar goles y cambios en el cronómetro.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
+      ],
+      "@react-native-community/datetimepicker"
     ],
-    "runtimeVersion": "1.0.58",
+    "runtimeVersion": "1.1.75",
     "updates": {
-      "url": "https://u.expo.dev/e1c363c7-a616-4fc2-8baa-d4bdc49546d7"
+      "url": "https://u.expo.dev/e1c363c7-a616-4fc2-8baa-d4bdc49546d7",
+      "checkAutomatically": "NEVER"
     },
     "extra": {
       "eas": {
         "projectId": "e1c363c7-a616-4fc2-8baa-d4bdc49546d7"
+      },
+      "firebase": {
+        "projectId": "futsal-amas-lega",
+        "apiKey": "AIzaSyBeMgEdKnD-xDVGnaCbwb35CGJtPR8PIy8",
+        "authDomain": "futsal-amas-lega.firebaseapp.com",
+        "storageBucket": "futsal-amas-lega.firebasestorage.app",
+        "messagingSenderId": "233851033282",
+        "androidAppId": "1:233851033282:android:887c3167571c7a649ccd5b",
+        "webAppId": "1:233851033282:web:53c6921d0a5176ae9ccd5b",
+        "versionUrl": "https://futsal-amas-lega.web.app/version.json",
+        "testerGroups": "testers"
       }
     }
   }

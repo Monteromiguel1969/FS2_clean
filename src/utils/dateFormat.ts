@@ -89,3 +89,30 @@ export function sortByDate<T>(items: T[], getDate: (item: T) => string): T[] {
     return da - db;
   });
 }
+
+/** yyyy-mm-dd desde Date local (medianoche). */
+export function dateToYmd(d: Date | null | undefined): string {
+  if (!d || isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function isValidYmd(value: string | null | undefined): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
+}
+
+/** Fecha de hoja o de player_json a dd/mm/aaaa. Acepta Date, ISO, serial de Sheets y dd/mm/aaaa. */
+export function toDisplayDate(value: unknown): string {
+  if (value == null || value === '') return '';
+  if (value instanceof Date) return formatDateGlobal(value);
+  if (typeof value === 'number' && Number.isFinite(value) && value > 20000 && value < 80000) {
+    const utc = new Date(Date.UTC(1899, 11, 30) + Math.round(value) * 86400000);
+    return formatDateGlobal(utc);
+  }
+  const raw = String(value).trim();
+  if (!raw) return '';
+  const formatted = formatDateGlobal(raw);
+  return formatted && formatted !== raw ? formatted : formatted || raw;
+}

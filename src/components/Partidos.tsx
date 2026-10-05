@@ -1,9 +1,12 @@
 import * as ImagePicker from 'expo-image-picker';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, Modal, ActivityIndicator, Linking, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { todayFormatted, formatDateExport, parseToDate } from '../utils/dateFormat';
+import { useScreenMetrics } from '../utils/useScreenMetrics';
+import { DDMMYYYYDatePickerField } from './YmdDatePickerField';
+import { useTextZoom, PinchTextZoomArea } from './ZoomableImage';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
@@ -12,10 +15,13 @@ import { FontAwesome } from '@expo/vector-icons';
 
 // Importaciones de servicios
 import { uploadActaToDrive, listActasFromDrive } from '../services/googleSheetsService';
+import { suggestedAsistencia } from '../utils/playerAvailability';
+import { buildReportEscudoHtml, REPORT_BRAND } from '../utils/reportBranding';
 
 /** Formato igual que la pestaña Partidos de Stats.tsx al exportar. */
-function buildReportFromPartido(partido, players = []) {
+function buildReportFromPartido(partido, players = [], escudoUri = null) {
   if (!partido) return '';
+  const escudoHtml = buildReportEscudoHtml(escudoUri);
   const parseMin = (str) => {
     if (str == null || str === '') return 0;
     const parts = String(str).trim().split(':').map(Number);
@@ -45,7 +51,7 @@ function buildReportFromPartido(partido, players = []) {
   const listaStaff = (players || []).filter(p => p.role === 'Monitor');
   const allPlayers = [...listaJugadores, ...listaStaff];
 
-  const headerBase = '<h1 style="text-align:center; color:#012E57;">ESTADÍSTICAS DEL EQUIPO</h1>';
+  const headerBase = escudoHtml + `<h1 style="text-align:center; color:${REPORT_BRAND.navy};">ESTADÍSTICAS DEL EQUIPO</h1>`;
   const fechaDdMmAa = (s) => (s ? (formatDateExport(parseToDate(s)) || s) : '');
   const rows = (partido.convocatoria || []).map(reg => {
     const jug = allPlayers.find(p => p.id === reg.id);
@@ -133,7 +139,278 @@ const parseFecha = (fechaStr) => {
   return isNaN(any) ? 0 : any;
 };
 
-export default function Partidos({ players = [], partidos, setPartidos, editItem, onBack, storageKeyBase = '@futsal_lega:default:default', onSelectPartidoToEdit, onClearEdit }) {
+function buildAutoPostMatchSummary(partido, players = []) {
+  if (!partido) {
+    return { staff: 'Sin datos del partido.', jugadoras: 'Sin datos del partido.' };
+  }
+  const convoc = Array.isArray(partido.convocatoria) ? partido.convocatoria : [];
+  const favor = Number(partido.golesFavor || 0);
+  const contra = Number(partido.golesContra || 0);
+  const diff = favor - contra;
+  const parseMin = (v) => {
+    if (v == null || v === '') return 0;
+    const parts = String(v).split(':').map(Number);
+    return Math.max(0, (parts[0] || 0) * 60 + (parts[1] || 0));
+  };
+  const topMinutos = [...convoc]
+    .map((p) => ({ name: p.name, sec: parseMin(p.minutos) }))
+    .sort((a, b) => b.sec - a.sec)
+    .slice(0, 3)
+    .map((x) => `${x.name} (${formatTiempoJugado(x.sec)})`);
+  const topGoles = [...convoc]
+    .map((p) => ({ name: p.name, goles: Number(p.goles || 0) }))
+    .filter((x) => x.goles > 0)
+    .sort((a, b) => b.goles - a.goles)
+    .slice(0, 3)
+    .map((x) => `${x.name} (${x.goles})`);
+  const eventos = Array.isArray(partido.eventosGoles) ? partido.eventosGoles : [];
+  const favorEventos = eventos.filter((e) => e.tipo === 'FAVOR').length;
+  const contraEventos = eventos.filter((e) => e.tipo === 'CONTRA').length;
+  const quintetoCount = {};
+  eventos.forEach((ev) => {
+    const q = String(ev?.quintetoEnPista || '').trim();
+    if (!q) return;
+    quintetoCount[q] = (quintetoCount[q] || 0) + (ev.tipo === 'FAVOR' ? 1 : -1);
+  });
+  const bestQuinteto = Object.entries(quintetoCount).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+
+  const foco = diff < 0
+    ? 'Foco proximo entreno: cierres de partido y defensa tras perdida.'
+    : contra >= favor
+    ? 'Foco proximo entreno: control de transiciones y toma de decision en ultimo pase.'
+    : 'Foco proximo entreno: mantener automatismos ofensivos y mejorar balon parado.';
+
+  const staff = [
+    `Resultado ${favor}-${contra} (${diff > 0 ? 'positivo' : diff < 0 ? 'a mejorar' : 'equilibrado'}).`,
+    `Minutos altos: ${topMinutos.length ? topMinutos.join(', ') : 'sin datos'}.`,
+    `Produccion ofensiva: ${topGoles.length ? topGoles.join(', ') : 'sin goleadoras registradas'}.`,
+    `Eventos de gol: favor ${favorEventos} / contra ${contraEventos}.`,
+    `Quinteto mas eficiente: ${bestQuinteto ? bestQuinteto[0] : 'sin registro suficiente'}.`,
+    foco,
+  ].join(' ');
+
+  const jugadoras = [
+    `Buen trabajo: ${favor > 0 ? `marcamos ${favor} gol(es)` : 'se genero esfuerzo colectivo'} y competimos hasta el final.`,
+    `A corregir: ${contra > 0 ? `encajamos ${contra} gol(es),` : 'mejorar continuidad'} sobre todo en momentos clave.`,
+    foco.replace('Foco proximo entreno:', 'Proximo entreno:'),
+  ].join(' ');
+
+  return { staff, jugadoras };
+}
+
+/**
+ * Renderiza el informe del partido como tablas reales (no texto plano):
+ *  - Cabecera (resultado, fecha, lugar)
+ *  - Convocatoria con asistencia, capitana, goles y minutos por jugadora
+ *  - Tiempos por período del cronómetro (P1..Pn + Total)
+ *  - Detalle de goles importados del cronómetro
+ */
+function ReportTablesView({ partido, players = [], textScale = 1 }) {
+  if (!partido) {
+    return (
+      <Text style={[reportStyles.muted, { fontSize: 12 * textScale }]}>
+        No hay datos del partido para mostrar.
+      </Text>
+    );
+  }
+
+  const parseMinSec = (str) => {
+    if (str == null || str === '') return 0;
+    const parts = String(str).trim().split(':').map(Number);
+    const m = Math.max(0, parts[0] || 0);
+    const s = Math.max(0, parts[1] || 0);
+    return m * 60 + s;
+  };
+  const formatTime = (totalSec) => {
+    const sec = Math.max(0, Math.floor(Number(totalSec) || 0));
+    if (sec >= 3600) {
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+  const formatMinSeg = (min, seg) => {
+    if (min == null && seg == null) return '-';
+    const m = Math.max(0, min ?? 0);
+    const s = Math.max(0, Math.min(59, seg ?? 0));
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  const allPlayers = Array.isArray(players) ? players : [];
+  const findPlayer = (id) => allPlayers.find((p) => p?.id === id);
+
+  const convocatoria = Array.isArray(partido.convocatoria) ? partido.convocatoria : [];
+  const tiempos = partido.tiemposPorPeriodo || {};
+  const totalPeriodos = (() => {
+    const first = Object.values(tiempos)[0];
+    return Array.isArray(first) ? first.length : 0;
+  })();
+  const eventos = Array.isArray(partido.eventosGoles) ? partido.eventosGoles : [];
+
+  const fz = (n) => ({ fontSize: n * textScale });
+
+  return (
+    <View style={reportStyles.container}>
+      <View style={reportStyles.headerBox}>
+        <Text style={[reportStyles.headerTitle, fz(15)]}>
+          {(partido.tipo || 'LIGA')} · {partido.rival || 'Rival'}
+        </Text>
+        <Text style={[reportStyles.headerLine, fz(12)]}>
+          Fecha: <Text style={reportStyles.bold}>{formatDateExport(parseToDate(partido.fecha)) || partido.fecha || '-'}</Text>
+          {'   '}
+          Lugar: <Text style={reportStyles.bold}>{partido.lugar || '-'}</Text>
+        </Text>
+        <Text style={[reportStyles.headerScore, fz(18)]}>
+          {partido.golesFavor ?? 0} - {partido.golesContra ?? 0}
+        </Text>
+      </View>
+
+      <Text style={[reportStyles.section, fz(13)]}>CONVOCATORIA</Text>
+      <View>
+          <View style={[reportStyles.row, reportStyles.rowHead]}>
+            <Text style={[reportStyles.cell, reportStyles.cellName, reportStyles.cellHead, fz(11)]}>Jugador</Text>
+            <Text style={[reportStyles.cell, reportStyles.cellSm, reportStyles.cellHead, fz(11)]}>Asist.</Text>
+            <Text style={[reportStyles.cell, reportStyles.cellSm, reportStyles.cellHead, fz(11)]}>Cap.</Text>
+            <Text style={[reportStyles.cell, reportStyles.cellSm, reportStyles.cellHead, fz(11)]}>Goles</Text>
+            <Text style={[reportStyles.cell, reportStyles.cellMd, reportStyles.cellHead, fz(11)]}>Minutos</Text>
+          </View>
+          {convocatoria.length === 0 ? (
+            <Text style={[reportStyles.muted, fz(11), { paddingVertical: 8 }]}>
+              Sin convocatoria registrada.
+            </Text>
+          ) : (
+            convocatoria.map((reg, idx) => {
+              const jug = findPlayer(reg.id);
+              const nombre =
+                (jug && ((jug.nominal && String(jug.nominal).trim()) || jug.name)) ||
+                reg.name || '-';
+              const minSec = parseMinSec(reg.minutos != null ? reg.minutos : '0:00');
+              return (
+                <View key={`conv-${reg.id || idx}`} style={[reportStyles.row, idx % 2 === 1 && reportStyles.rowAlt]}>
+                  <Text style={[reportStyles.cell, reportStyles.cellName, fz(11)]} numberOfLines={1}>{nombre}</Text>
+                  <Text style={[reportStyles.cell, reportStyles.cellSm, fz(11)]}>{reg.estado || '-'}</Text>
+                  <Text style={[reportStyles.cell, reportStyles.cellSm, fz(11)]}>{reg.esCapitan ? 'Sí' : '-'}</Text>
+                  <Text style={[reportStyles.cell, reportStyles.cellSm, reportStyles.cellNum, fz(11)]}>{reg.goles ?? 0}</Text>
+                  <Text style={[reportStyles.cell, reportStyles.cellMd, reportStyles.cellNum, fz(11)]}>{formatTime(minSec)}</Text>
+                </View>
+              );
+            })
+          )}
+      </View>
+
+      <Text style={[reportStyles.section, fz(13)]}>TIEMPOS POR PERÍODO</Text>
+      {totalPeriodos > 0 && Object.keys(tiempos).length > 0 ? (
+        <View>
+            <View style={[reportStyles.row, reportStyles.rowHead]}>
+              <Text style={[reportStyles.cell, reportStyles.cellName, reportStyles.cellHead, fz(11)]}>Jugador</Text>
+              {Array.from({ length: totalPeriodos }, (_, j) => (
+                <Text key={`hp-${j}`} style={[reportStyles.cell, reportStyles.cellSm, reportStyles.cellHead, fz(11)]}>
+                  P{j + 1}
+                </Text>
+              ))}
+              <Text style={[reportStyles.cell, reportStyles.cellMd, reportStyles.cellHead, fz(11)]}>Total</Text>
+            </View>
+            {convocatoria.map((reg, idx) => {
+              const jug = findPlayer(reg.id);
+              const nombre =
+                (jug && ((jug.nominal && String(jug.nominal).trim()) || jug.name)) ||
+                reg.name || '-';
+              const segs = tiempos[reg.id] || [];
+              const total = segs.reduce((a, b) => a + (b || 0), 0);
+              return (
+                <View key={`tp-${reg.id || idx}`} style={[reportStyles.row, idx % 2 === 1 && reportStyles.rowAlt]}>
+                  <Text style={[reportStyles.cell, reportStyles.cellName, fz(11)]} numberOfLines={1}>{nombre}</Text>
+                  {Array.from({ length: totalPeriodos }, (_, j) => (
+                    <Text key={`tpc-${reg.id}-${j}`} style={[reportStyles.cell, reportStyles.cellSm, reportStyles.cellNum, fz(11)]}>
+                      {formatTime(segs[j])}
+                    </Text>
+                  ))}
+                  <Text style={[reportStyles.cell, reportStyles.cellMd, reportStyles.cellNum, reportStyles.bold, fz(11)]}>
+                    {formatTime(total)}
+                  </Text>
+                </View>
+              );
+            })}
+        </View>
+      ) : (
+        <Text style={[reportStyles.muted, fz(11)]}>
+          Sin datos del cronómetro para este partido.
+        </Text>
+      )}
+
+      <Text style={[reportStyles.section, fz(13)]}>DETALLE DE GOLES</Text>
+      {eventos.length > 0 ? (
+        <View>
+            <View style={[reportStyles.row, reportStyles.rowHead]}>
+              <Text style={[reportStyles.cell, reportStyles.cellName, reportStyles.cellHead, fz(11)]}>Autor</Text>
+              <Text style={[reportStyles.cell, reportStyles.cellSm, reportStyles.cellHead, fz(11)]}>Min</Text>
+              <Text style={[reportStyles.cell, reportStyles.cellSm, reportStyles.cellHead, fz(11)]}>Tipo</Text>
+              <Text style={[reportStyles.cell, reportStyles.cellWide, reportStyles.cellHead, fz(11)]}>Quinteto en pista</Text>
+            </View>
+            {eventos.map((ev, i) => (
+              <View key={`g-${i}`} style={[reportStyles.row, i % 2 === 1 && reportStyles.rowAlt]}>
+                <Text style={[reportStyles.cell, reportStyles.cellName, fz(11)]} numberOfLines={1}>{ev.autor || '-'}</Text>
+                <Text style={[reportStyles.cell, reportStyles.cellSm, fz(11)]}>{formatMinSeg(ev.minuto, ev.segundo)}</Text>
+                <Text
+                  style={[
+                    reportStyles.cell,
+                    reportStyles.cellSm,
+                    reportStyles.bold,
+                    { color: ev.tipo === 'CONTRA' ? '#C62828' : '#2E7D32' },
+                    fz(11),
+                  ]}
+                >
+                  {ev.tipo === 'CONTRA' ? 'C' : 'F'}
+                </Text>
+                <Text style={[reportStyles.cell, reportStyles.cellWide, fz(11)]}>
+                  {ev.quintetoEnPista || '-'}
+                </Text>
+              </View>
+            ))}
+        </View>
+      ) : (
+        <Text style={[reportStyles.muted, fz(11)]}>
+          Sin goles registrados.
+        </Text>
+      )}
+    </View>
+  );
+}
+
+const reportStyles = StyleSheet.create({
+  container: { paddingTop: 4 },
+  headerBox: {
+    backgroundColor: '#F2F6FB',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#CFD8DC',
+  },
+  headerTitle: { color: '#012E57', fontWeight: '900', textAlign: 'center', marginBottom: 4 },
+  headerLine: { color: '#37474F', textAlign: 'center', marginBottom: 4 },
+  headerScore: { color: '#0D47A1', fontWeight: '900', textAlign: 'center' },
+  section: { color: '#0D47A1', fontWeight: '900', marginTop: 14, marginBottom: 6, letterSpacing: 0.4 },
+  row: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#E0E0E0' },
+  rowHead: { backgroundColor: '#1565C0' },
+  rowAlt: { backgroundColor: '#F7FAFC' },
+  cell: { paddingVertical: 6, paddingHorizontal: 8, color: '#23303D' },
+  cellHead: { color: '#FFF', fontWeight: '800' },
+  cellName: { flex: 1.1, minWidth: 0 },
+  cellSm: { flex: 1, minWidth: 0, textAlign: 'center' },
+  cellMd: { flex: 1.2, minWidth: 0, textAlign: 'center' },
+  cellWide: { flex: 2.4, minWidth: 0 },
+  cellNum: { textAlign: 'center' },
+  bold: { fontWeight: '800' },
+  muted: { color: '#607D8B', fontStyle: 'italic', paddingVertical: 6 },
+});
+
+export default function Partidos({ players = [], partidos, setPartidos, editItem, onBack, escudoUri = null, storageKeyBase = '@futsal_lega:default:default', onSelectPartidoToEdit, onClearEdit }) {
+  const screen = useScreenMetrics();
   const [rival, setRival] = useState('');
   const [fecha, setFecha] = useState('');
   const [lugar, setLugar] = useState('LOCAL');
@@ -152,12 +429,15 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
   const [loading, setLoading] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
   const [reportContent, setReportContent] = useState('');
+  const [autoStaffSummary, setAutoStaffSummary] = useState('');
+  const [autoPlayersSummary, setAutoPlayersSummary] = useState('');
   const [selectedPartidoId, setSelectedPartidoId] = useState(null);
   const [selectedPartido, setSelectedPartido] = useState(null);
   const [historicoModalVisible, setHistoricoModalVisible] = useState(false);
   const [eventosGoles, setEventosGoles] = useState([]);
   const [tiemposPorPeriodo, setTiemposPorPeriodo] = useState({});
   const sharingRef = useRef(false);
+  const reportZoom = useTextZoom(1);
 
   const generatingRef = useRef(false);
 
@@ -189,7 +469,7 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
     } else {
       setFecha(todayFormatted());
       setConvocatoria(players.map(p => ({
-        id: p.id, name: p.name, role: p.role, estado: 'AS',
+        id: p.id, name: p.name, role: p.role, estado: suggestedAsistencia(p),
         goles: 0, esCapitan: false, minutos: '0:00'
       })));
       setEventosGoles([]);
@@ -538,8 +818,9 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
 
   const handleSave = async () => {
     if (!rival.trim()) return Alert.alert("Error", "Rival obligatorio");
+    const editId = editItem?.id != null ? String(editItem.id) : null;
     const data = {
-      id: editItem?.id || Date.now().toString(),
+      id: editId || Date.now().toString(),
       rival, fecha, lugar, tipo,
       golesFavor: parseInt(golesFavor) || 0,
       golesContra: parseInt(golesContra) || 0,
@@ -547,7 +828,9 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
       eventosGoles,
       tiemposPorPeriodo
     };
-    const nuevos = editItem ? partidos.map(p => p.id === editItem.id ? data : p) : [data, ...partidos];
+    const nuevos = editId
+      ? partidos.map((p) => (String(p.id) === editId ? data : p))
+      : [data, ...partidos];
     try {
       await setPartidos(nuevos);
     } catch (e) {
@@ -568,10 +851,26 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
     }
     setSelectedPartidoId(partido.id);
     setSelectedPartido(partido);
-    const html = buildReportFromPartido(partido, players);
+    const auto = buildAutoPostMatchSummary(partido, players);
+    setAutoStaffSummary(auto.staff);
+    setAutoPlayersSummary(auto.jugadoras);
+    const html = `
+      <h2>RESUMEN STAFF (AUTO)</h2>
+      <p>${auto.staff}</p>
+      <h2>RESUMEN JUGADORAS (AUTO)</h2>
+      <p>${auto.jugadoras}</p>
+      ${buildReportFromPartido(partido, players, escudoUri)}
+    `;
     setReportContent(html);
-    setReportModalVisible(true);
-    setHistoricoModalVisible(false);
+    // Si el histórico está abierto, lo cerramos primero para evitar conflictos
+    // entre dos <Modal> superpuestos en Android (la pantalla quedaba atenuada
+    // y los toques bloqueados). Abrimos el informe en el siguiente tick.
+    if (historicoModalVisible) {
+      setHistoricoModalVisible(false);
+      setTimeout(() => setReportModalVisible(true), 250);
+    } else {
+      setReportModalVisible(true);
+    }
   };
 
   const reportHtmlStyle = `
@@ -619,6 +918,31 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
     }
   };
 
+  const handleShareWhatsAppText = async () => {
+    if (!selectedPartido) return;
+    try {
+      const favor = selectedPartido.golesFavor ?? 0;
+      const contra = selectedPartido.golesContra ?? 0;
+      const goleadores = (selectedPartido.convocatoria || [])
+        .filter((c) => Number(c?.goles) > 0)
+        .map((c) => {
+          const jug = (players || []).find((p) => String(p?.id) === String(c.id));
+          const nombre = jug?.name || jug?.nombre || c.nombre || 'Jugador';
+          return `• ${nombre}: ${c.goles}`;
+        })
+        .join('\n');
+      const msg = [
+        `⚽ Futsal Amas Lega vs ${selectedPartido.rival || 'Rival'}`,
+        `Resultado: ${favor} - ${contra}`,
+        selectedPartido.fecha ? `Fecha: ${selectedPartido.fecha}` : null,
+        goleadores ? `\nGoleadores:\n${goleadores}` : '\nSin goles registrados en convocatoria.',
+      ].filter(Boolean).join('\n');
+      await Share.share({ message: msg });
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo abrir compartir.');
+    }
+  };
+
   // FUNCIÓN DE SEGURIDAD PARA ICONOS
   const Icono = ({ name, size, color }) => {
     try {
@@ -637,16 +961,24 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-    <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
+    <View style={[styles.topFixed, { paddingHorizontal: screen.horizontalPadding }]}>
       <Text style={styles.title}>ACTA DE PARTIDO</Text>
-
-      {/* Botón para abrir histórico */}
-      <TouchableOpacity
-        style={styles.btnHistorico}
-        onPress={() => setHistoricoModalVisible(true)}
-      >
-        <Text style={styles.btnHistoricoTxt}>HISTÓRICO DE PARTIDOS</Text>
-      </TouchableOpacity>
+      <View style={styles.topActions}>
+        <TouchableOpacity style={[styles.topBtn, styles.topBtnSave]} onPress={handleSave}>
+          <Text style={styles.topBtnTxt}>GUARDAR TODO</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.topBtn, styles.topBtnCancel]} onPress={onBack}>
+          <Text style={styles.topBtnTxt}>CANCELAR</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.topBtn, styles.topBtnHistorico]} onPress={() => setHistoricoModalVisible(true)}>
+          <Text style={styles.topBtnTxt}>HISTORICO</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+    <ScrollView
+      style={[styles.scrollArea, { paddingHorizontal: screen.horizontalPadding }]}
+      contentContainerStyle={{ paddingBottom: 100 }}
+    >
 
       {editItem && (
         <>
@@ -663,7 +995,9 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
         <TextInput style={styles.input} placeholder="Rival" value={rival} onChangeText={setRival} placeholderTextColor="#666" />
 
         <View style={styles.row}>
-          <TextInput style={[styles.input, {flex:1.5}]} value={fecha} onChangeText={setFecha} />
+          <View style={{ flex: 1.5 }}>
+            <DDMMYYYYDatePickerField value={fecha} onChange={setFecha} variant="dark" narrow={false} />
+          </View>
           <TouchableOpacity style={[styles.tab, lugar==='LOCAL' && styles.activeTab]} onPress={()=>setLugar('LOCAL')}><Text style={styles.tabTxt}>LOCAL</Text></TouchableOpacity>
           <TouchableOpacity style={[styles.tab, lugar==='VISITANTE' && styles.activeTab]} onPress={()=>setLugar('VISITANTE')}><Text style={styles.tabTxt}>VISIT.</Text></TouchableOpacity>
         </View>
@@ -778,9 +1112,6 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
         </View>
       )})}
 
-      <TouchableOpacity style={styles.btnSave} onPress={handleSave}><Text style={styles.btnSaveTxt}>GUARDAR TODO</Text></TouchableOpacity>
-      <TouchableOpacity style={[styles.btnCancel, {marginBottom: 50}]} onPress={onBack}><Text style={styles.btnCancelTxt}>CANCELAR</Text></TouchableOpacity>
-
       {/* MODAL HISTÓRICO DE PARTIDOS */}
       <Modal visible={historicoModalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
@@ -792,7 +1123,7 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
               <ScrollView style={{ maxHeight: 400, marginVertical: 10 }} showsVerticalScrollIndicator>
                 {partidosOrdenados.map((p) => (
                   <View key={p.id} style={styles.historicoRow}>
-                    <View style={[styles.historicoRowContent, editItem?.id === p.id && styles.historicoRowSelected]}>
+                    <View style={[styles.historicoRowContent, editItem && String(editItem.id) === String(p.id) && styles.historicoRowSelected]}>
                       <View style={styles.historicoRowLeft}>
                         <Text style={styles.historicoRival} numberOfLines={1}>{p.rival || 'Sin rival'}</Text>
                         <Text style={styles.historicoMeta}>{formatDateExport(parseToDate(p.fecha)) || p.fecha || ''} · {(p.tipo || 'LIGA')} · {p.lugar === 'VISITANTE' ? 'VISIT.' : 'LOCAL'}</Text>
@@ -896,34 +1227,64 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
 
       {/* MODAL DE INFORME DE PARTIDO */}
       <Modal visible={reportModalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+        <View style={styles.reportModalOverlay}>
           <View style={styles.reportModalContent}>
             <Text style={styles.modalTitle}>INFORME DE PARTIDO</Text>
-            <ScrollView 
-              style={styles.reportScrollView}
-              contentContainerStyle={styles.reportScrollContent}
-              showsVerticalScrollIndicator={true}
+            <ScrollView
+              style={[styles.reportScrollView, { height: Math.max(80, Math.round(screen.height * 0.65)) }]}
+              contentContainerStyle={[styles.reportScrollContent, { paddingBottom: 10 }]}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
             >
-              <Text style={styles.reportText}>{reportPreview || 'Cargando informe...'}</Text>
+              {!!autoStaffSummary && (
+                <View style={styles.autoSummaryBox}>
+                  <Text style={styles.autoSummaryTitle}>STAFF (AUTO)</Text>
+                  <Text style={[styles.autoSummaryTxt, { fontSize: 11 * reportZoom.scale }]}>
+                    {autoStaffSummary}
+                  </Text>
+                </View>
+              )}
+              {!!autoPlayersSummary && (
+                <View style={styles.autoSummaryBoxPlayers}>
+                  <Text style={styles.autoSummaryTitle}>JUGADORAS (AUTO)</Text>
+                  <Text style={[styles.autoSummaryTxt, { fontSize: 11 * reportZoom.scale }]}>
+                    {autoPlayersSummary}
+                  </Text>
+                </View>
+              )}
+
+              <ReportTablesView
+                partido={selectedPartido}
+                players={players}
+                textScale={reportZoom.scale}
+              />
             </ScrollView>
             <View style={styles.reportActions}>
-              <TouchableOpacity 
-                style={[styles.reportActionBtn, styles.printBtn]} 
+              <TouchableOpacity
+                style={[styles.reportActionBtn, styles.printBtn]}
                 onPress={handlePrintReport}
               >
                 <Text style={styles.reportActionBtnTxt}>IMPRIMIR</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.reportActionBtn, styles.driveBtn]} 
+              <TouchableOpacity
+                style={[styles.reportActionBtn, styles.driveBtn]}
                 onPress={handleExportReportToDrive}
               >
                 <Text style={styles.reportActionBtnTxt}>COMPARTIR / EXPORTAR</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.reportActionBtn, styles.closeBtn]} 
+              <TouchableOpacity
+                style={[styles.reportActionBtn, styles.whatsAppBtn]}
+                onPress={handleShareWhatsAppText}
+              >
+                <Text style={styles.reportActionBtnTxt}>TEXTO WHATSAPP</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.reportActionBtn, styles.closeBtn]}
                 onPress={() => {
                   setReportModalVisible(false);
                   setReportContent('');
+                  setAutoStaffSummary('');
+                  setAutoPlayersSummary('');
                   setSelectedPartidoId(null);
                 }}
               >
@@ -940,8 +1301,38 @@ export default function Partidos({ players = [], partidos, setPartidos, editItem
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#001A33', padding: 15 },
-  title: { color: '#FFF', fontSize: 18, fontWeight: 'bold', textAlign: 'center', marginTop: 30, marginBottom: 15 },
+  container: { flex: 1, backgroundColor: '#001A33' },
+  topFixed: {
+    backgroundColor: '#001A33',
+    paddingTop: 8,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#12324f',
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6
+  },
+  title: { color: '#FFF', fontSize: 19, fontWeight: '900', textAlign: 'center', marginBottom: 10, letterSpacing: 0.3 },
+  topActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'center' },
+  topBtn: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '28%',
+    minWidth: 88,
+    maxWidth: '100%',
+    alignItems: 'center',
+    borderRadius: 10,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  topBtnSave: { backgroundColor: '#2E7D32' },
+  topBtnCancel: { backgroundColor: '#C62828' },
+  topBtnHistorico: { backgroundColor: '#0D47A1' },
+  topBtnTxt: { color: '#FFF', fontWeight: '800', fontSize: 10, letterSpacing: 0.2 },
+  scrollArea: { flex: 1, paddingTop: 10 },
   card: { backgroundColor: '#012E57', padding: 15, borderRadius: 12, marginBottom: 15 },
   input: { backgroundColor: '#001A33', color: '#FFF', padding: 10, borderRadius: 8, marginBottom: 8, fontSize: 13 },
   row: { flexDirection: 'row', gap: 6, alignItems: 'center' },
@@ -976,25 +1367,28 @@ const styles = StyleSheet.create({
   btnNA: { backgroundColor: '#C62828' },
   gInput: { backgroundColor: '#001A33', color: '#FFF', width: 30, textAlign: 'center', borderRadius: 4, fontSize: 11, marginLeft: 5 },
   pMin: { color: '#00aaff', fontSize: 10, flex: 1, textAlign: 'right' },
-  btnSave: { backgroundColor: '#2E7D32', padding: 15, borderRadius: 12, alignItems: 'center', marginTop: 15 },
-  btnSaveTxt: { color: '#FFF', fontWeight: 'bold' },
-  btnCancel: { backgroundColor: '#C62828', padding: 15, borderRadius: 12, alignItems: 'center', marginTop: 10 },
-  btnCancelTxt: { color: '#FFF', fontWeight: 'bold' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
+  reportModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-start', alignItems: 'center', paddingTop: 10 },
   modalContent: { backgroundColor: '#012E57', width: '90%', borderRadius: 15, padding: 20 },
   modalTitle: { color: '#FFF', fontWeight: 'bold', textAlign: 'center' },
   sesionItem: { flexDirection: 'row', justifyContent: 'space-between', padding: 15, borderBottomWidth: 1, borderBottomColor: '#001A33' },
   btnCerrarModal: { backgroundColor: '#C62828', padding: 10, borderRadius: 8, marginTop: 10, alignItems: 'center' },
   reportBtn: { backgroundColor: '#FF6D00', padding: 12, borderRadius: 8, alignItems: 'center', marginBottom: 15 },
   reportBtnTxt: { color: '#FFF', fontWeight: 'bold', fontSize: 11 },
-  reportModalContent: { backgroundColor: '#FFF', width: '95%', maxHeight: '90%', borderRadius: 15, padding: 20 },
-  reportScrollView: { flex: 1, maxHeight: '70%', marginVertical: 10 },
-  reportScrollContent: { paddingBottom: 20 },
+  reportModalContent: { backgroundColor: '#FFF', width: '94%', borderRadius: 15, padding: 16 },
+  autoSummaryBox: { backgroundColor: '#E3F2FD', borderRadius: 10, padding: 10, marginTop: 8 },
+  autoSummaryBoxPlayers: { backgroundColor: '#E8F5E9', borderRadius: 10, padding: 10, marginTop: 8 },
+  autoSummaryTitle: { color: '#0D47A1', fontSize: 11, fontWeight: '800', marginBottom: 4 },
+  autoSummaryTxt: { color: '#263238', fontSize: 11, lineHeight: 16 },
+  reportScrollView: { marginVertical: 10 },
+  reportScrollContent: { paddingBottom: 10 },
   reportText: { fontSize: 12, color: '#333', lineHeight: 20 },
+  reportPinchWrap: { flex: 1, minHeight: 0 },
   reportActions: { flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
   reportActionBtn: { flex: 1, padding: 12, borderRadius: 8, alignItems: 'center', minWidth: 100 },
   printBtn: { backgroundColor: '#1565C0' },
   driveBtn: { backgroundColor: '#2E7D32' },
+  whatsAppBtn: { backgroundColor: '#128C7E' },
   closeBtn: { backgroundColor: '#C62828' },
   reportActionBtnTxt: { color: '#FFF', fontWeight: 'bold', fontSize: 10 },
   historicoEmpty: { color: '#B0BEC5', fontSize: 11, fontStyle: 'italic', paddingVertical: 12 },
