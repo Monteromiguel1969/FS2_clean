@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Alert, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Alert, ActivityIndicator, TextInput, ScrollView } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
 import {
   exportPlantilla,
@@ -14,6 +14,10 @@ import {
   exportEvaluacionesDIViewsPersonal,
   importEvaluacionesDIIA,
   importEvaluacionesDIPersonal,
+  getCurrentSpreadsheetId,
+  setUserSpreadsheetId,
+  getCurrentGoogleScriptUrl,
+  setUserGoogleScriptUrl,
 } from '../services/googleSheetsService';
 import { normalizePlayerRatings } from '../utils/playerRating';
 
@@ -57,6 +61,9 @@ export default function GestionDatosModal({
   setEntrenos,
 }: GestionDatosModalProps) {
   const [loading, setLoading] = useState<string | null>(null);
+  const [spreadsheetIdInput, setSpreadsheetIdInput] = useState('');
+  const [scriptUrlInput, setScriptUrlInput] = useState('');
+  const [loadingConfig, setLoadingConfig] = useState(false);
 
   const handleExportPlantilla = async () => {
     if (players.length === 0) {
@@ -389,6 +396,48 @@ export default function GestionDatosModal({
   const handleResetFormularioPersonal = () => resetEvaluacionesLocales('personal');
   const handleResetFormulariosTodo = () => resetEvaluacionesLocales('all');
 
+  useEffect(() => {
+    let active = true;
+    const loadConfig = async () => {
+      if (!visible) return;
+      setLoadingConfig(true);
+      try {
+        const [sheetId, scriptUrl] = await Promise.all([
+          getCurrentSpreadsheetId(),
+          getCurrentGoogleScriptUrl(),
+        ]);
+        if (!active) return;
+        setSpreadsheetIdInput(sheetId || '');
+        setScriptUrlInput(scriptUrl || '');
+      } catch {
+        if (!active) return;
+        setSpreadsheetIdInput('');
+        setScriptUrlInput('');
+      } finally {
+        if (active) setLoadingConfig(false);
+      }
+    };
+    loadConfig();
+    return () => {
+      active = false;
+    };
+  }, [visible]);
+
+  const handleGuardarConfiguracion = async () => {
+    setLoading('saveConfig');
+    try {
+      await Promise.all([
+        setUserSpreadsheetId(spreadsheetIdInput.trim() ? spreadsheetIdInput.trim() : null),
+        setUserGoogleScriptUrl(scriptUrlInput.trim() ? scriptUrlInput.trim() : null),
+      ]);
+      Alert.alert('Configuración guardada', 'Se actualizó el ID de la hoja y la URL del Apps Script.');
+    } catch (e) {
+      Alert.alert('Error', `No se pudo guardar la configuración: ${(e as Error).message}`);
+    } finally {
+      setLoading(null);
+    }
+  };
+
   const RowAction = ({
     label,
     loadingKey,
@@ -450,58 +499,105 @@ export default function GestionDatosModal({
     <Modal visible={visible} transparent animationType="slide">
       <View style={styles.overlay}>
         <View style={styles.content}>
-          <Text style={styles.title}>GESTIÓN DE DATOS</Text>
-          <Text style={styles.subtitle}>Importar / Exportar con Google Sheets</Text>
-
-          <RowAction
-            label="Plantilla"
-            loadingKey="plantilla"
-            onExport={handleExportPlantilla}
-            onImport={handleImportPlantilla}
-          />
-          <RowAction
-            label="Partidos"
-            loadingKey="partidos"
-            onExport={handleExportPartidos}
-            onImport={handleImportPartidos}
-          />
-          <RowAction
-            label="Entrenamientos"
-            loadingKey="entrenos"
-            onExport={handleExportEntrenamientos}
-            onImport={handleImportEntrenamientos}
-          />
-          <RowAction
-            label="Ponderación IA"
-            loadingKey="formIA"
-            onExport={handleExportFormularioIA}
-            onImport={handleImportFormularioIA}
-            onReset={handleResetFormularioIA}
-            resetLoadingKey="resetIA"
-          />
-          <RowAction
-            label="Formulario Personal"
-            loadingKey="formPersonal"
-            onExport={handleExportFormularioPersonal}
-            onImport={handleImportFormularioPersonal}
-            onReset={handleResetFormularioPersonal}
-            resetLoadingKey="resetPersonal"
-          />
-          <TouchableOpacity
-            style={[styles.closeBtn, styles.resetAllBtn]}
-            onPress={handleResetFormulariosTodo}
-            disabled={!!loading}
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator
           >
-            {loading === 'resetAll' ? (
-              <ActivityIndicator color="#FFF" size="small" />
-            ) : (
-              <Text style={styles.closeBtnTxt}>REINICIAR TODAS LAS EVALUACIONES (LOCAL)</Text>
-            )}
-          </TouchableOpacity>
+            <Text style={styles.title}>GESTIÓN DE DATOS</Text>
+            <Text style={styles.subtitle}>Importar / Exportar con Google Sheets</Text>
 
-          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-            <Text style={styles.closeBtnTxt}>CERRAR</Text>
-          </TouchableOpacity>
+            <View style={styles.configBlock}>
+              <Text style={styles.configTitle}>Configuración de sincronización</Text>
+              {loadingConfig ? (
+                <ActivityIndicator color="#00aaff" size="small" />
+              ) : (
+                <>
+                  <Text style={styles.configLabel}>ID de Google Sheets</Text>
+                  <TextInput
+                    style={styles.configInput}
+                    value={spreadsheetIdInput}
+                    onChangeText={setSpreadsheetIdInput}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    placeholder="1AbC... (ID o URL)"
+                    placeholderTextColor="#7ea6c8"
+                  />
+                  <Text style={styles.configLabel}>URL de Apps Script (/exec)</Text>
+                  <TextInput
+                    style={styles.configInput}
+                    value={scriptUrlInput}
+                    onChangeText={setScriptUrlInput}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    placeholderTextColor="#7ea6c8"
+                  />
+                </>
+              )}
+              <TouchableOpacity
+                style={[styles.closeBtn, styles.saveConfigBtn]}
+                onPress={handleGuardarConfiguracion}
+                disabled={!!loading || loadingConfig}
+              >
+                {loading === 'saveConfig' ? (
+                  <ActivityIndicator color="#FFF" size="small" />
+                ) : (
+                  <Text style={styles.closeBtnTxt}>GUARDAR CONFIGURACIÓN</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <RowAction
+              label="Plantilla"
+              loadingKey="plantilla"
+              onExport={handleExportPlantilla}
+              onImport={handleImportPlantilla}
+            />
+            <RowAction
+              label="Partidos"
+              loadingKey="partidos"
+              onExport={handleExportPartidos}
+              onImport={handleImportPartidos}
+            />
+            <RowAction
+              label="Entrenamientos"
+              loadingKey="entrenos"
+              onExport={handleExportEntrenamientos}
+              onImport={handleImportEntrenamientos}
+            />
+            <RowAction
+              label="Ponderación IA"
+              loadingKey="formIA"
+              onExport={handleExportFormularioIA}
+              onImport={handleImportFormularioIA}
+              onReset={handleResetFormularioIA}
+              resetLoadingKey="resetIA"
+            />
+            <RowAction
+              label="Formulario Personal"
+              loadingKey="formPersonal"
+              onExport={handleExportFormularioPersonal}
+              onImport={handleImportFormularioPersonal}
+              onReset={handleResetFormularioPersonal}
+              resetLoadingKey="resetPersonal"
+            />
+            <TouchableOpacity
+              style={[styles.closeBtn, styles.resetAllBtn]}
+              onPress={handleResetFormulariosTodo}
+              disabled={!!loading}
+            >
+              {loading === 'resetAll' ? (
+                <ActivityIndicator color="#FFF" size="small" />
+              ) : (
+                <Text style={styles.closeBtnTxt}>REINICIAR TODAS LAS EVALUACIONES (LOCAL)</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+              <Text style={styles.closeBtnTxt}>CERRAR</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -519,10 +615,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#012E57',
     width: '90%',
     borderRadius: 15,
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    maxHeight: '92%',
   },
+  scrollContent: { paddingBottom: 10 },
   title: { color: '#FFF', fontSize: 18, fontWeight: 'bold', textAlign: 'center', marginBottom: 4 },
   subtitle: { color: '#00aaff', fontSize: 10, textAlign: 'center', marginBottom: 20 },
+  configBlock: {
+    backgroundColor: '#001A33',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
+  },
+  configTitle: { color: '#00aaff', fontSize: 12, fontWeight: '700', marginBottom: 8 },
+  configLabel: { color: '#9ed8ff', fontSize: 11, marginTop: 6, marginBottom: 4 },
+  configInput: {
+    backgroundColor: '#01305b',
+    borderRadius: 8,
+    color: '#FFF',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    fontSize: 12,
+  },
+  saveConfigBtn: { backgroundColor: '#2E7D32', marginTop: 10, marginBottom: 0 },
   rowAction: {
     flexDirection: 'row',
     justifyContent: 'space-between',
