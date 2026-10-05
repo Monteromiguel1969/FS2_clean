@@ -15,6 +15,7 @@ import { formatDateExport, formatDateGlobal, parseToDate } from '../utils/dateFo
 import { explainValoracionIA } from '../utils/playerRating';
 
 const USER_SPREADSHEET_KEY = '@futsal_user_spreadsheet_id';
+const USER_GOOGLE_SCRIPT_URL_KEY = '@futsal_user_google_script_url';
 
 function normalizeSpreadsheetId(value: string | null | undefined): string {
   const raw = String(value || '').trim();
@@ -46,11 +47,52 @@ export async function getCurrentSpreadsheetId(): Promise<string> {
   return getSpreadsheetId();
 }
 
+function normalizeGoogleScriptUrl(value: string | null | undefined): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/https:\/\/script\.google\.com\/macros\/s\/([a-zA-Z0-9_-]+)\/(exec|dev)/i);
+  if (match?.[1] && match?.[2]) {
+    return `https://script.google.com/macros/s/${match[1]}/${match[2]}`;
+  }
+  const idOnlyMatch = raw.match(/^AKfy[a-zA-Z0-9_-]+$/);
+  if (idOnlyMatch) {
+    return `https://script.google.com/macros/s/${raw}/exec`;
+  }
+  return raw;
+}
+
+async function getGoogleScriptUrl(): Promise<string> {
+  try {
+    const userUrl = normalizeGoogleScriptUrl(await AsyncStorage.getItem(USER_GOOGLE_SCRIPT_URL_KEY));
+    if (userUrl) return userUrl;
+  } catch {}
+  return normalizeGoogleScriptUrl(DEFAULT_GOOGLE_SCRIPT_URL);
+}
+
+export async function setUserGoogleScriptUrl(url: string | null): Promise<void> {
+  const normalized = normalizeGoogleScriptUrl(url);
+  if (!normalized) await AsyncStorage.removeItem(USER_GOOGLE_SCRIPT_URL_KEY);
+  else await AsyncStorage.setItem(USER_GOOGLE_SCRIPT_URL_KEY, normalized);
+}
+
+export async function getCurrentGoogleScriptUrl(): Promise<string> {
+  return getGoogleScriptUrl();
+}
+
+function shortUrlForMessage(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
 const HTML_JSON_HINT =
   'El servidor respondió con una página HTML en lugar de JSON. Suele pasar si: la URL /exec no es la de la última implementación, ' +
   'la app web no está publicada con acceso «Cualquiera», o Google devuelve una página de error. ' +
   'En Apps Script: Implementar → Nueva implementación → Aplicación web → Ejecutar como: tú → Quién tiene acceso: cualquiera. ' +
-  'Copia la nueva URL /exec y actualízala en googleSheetsService.ts o en Gestión de datos.';
+  'Copia la nueva URL /exec y actualízala en Gestión de datos.';
 
 function stripBom(s: string): string {
   if (!s.length) return s;
@@ -73,23 +115,26 @@ function looksLikeHtml(s: string): boolean {
  */
 function parseGoogleScriptBody(
   text: string,
-  httpStatus: number
+  httpStatus: number,
+  scriptUrl: string
 ): { ok: true; data: any } | { ok: false; message: string } {
   const trimmed = stripBom(text).trim();
+  const urlInfo = scriptUrl ? ` URL actual: ${shortUrlForMessage(scriptUrl)}` : '';
+  const statusLabel = httpStatus === 403 ? 'Acceso denegado' : 'Respuesta';
   if (!trimmed) {
-    return { ok: false, message: `Respuesta vacía del servidor (HTTP ${httpStatus}). ${HTML_JSON_HINT}` };
+    return { ok: false, message: `Respuesta vacía del servidor (HTTP ${httpStatus}). ${HTML_JSON_HINT}${urlInfo}` };
   }
   if (looksLikeHtml(trimmed)) {
     return {
       ok: false,
-      message: `Respuesta HTML en lugar de JSON (HTTP ${httpStatus}). ${HTML_JSON_HINT}`,
+      message: `${statusLabel}: respuesta HTML en lugar de JSON (HTTP ${httpStatus}). ${HTML_JSON_HINT}${urlInfo}`,
     };
   }
   const first = trimmed[0];
   if (first !== '{' && first !== '[') {
     return {
       ok: false,
-      message: `El servidor no devolvió JSON (HTTP ${httpStatus}). ${HTML_JSON_HINT}`,
+      message: `El servidor no devolvió JSON (HTTP ${httpStatus}). ${HTML_JSON_HINT}${urlInfo}`,
     };
   }
   try {
@@ -97,11 +142,11 @@ function parseGoogleScriptBody(
   } catch (e) {
     const em = e instanceof Error ? e.message : String(e);
     if (em.includes('<') || looksLikeHtml(trimmed)) {
-      return { ok: false, message: `${HTML_JSON_HINT} (HTTP ${httpStatus})` };
+      return { ok: false, message: `${HTML_JSON_HINT} (HTTP ${httpStatus}).${urlInfo ? ` ${urlInfo}` : ''}` };
     }
     return {
       ok: false,
-      message: `JSON no válido (HTTP ${httpStatus}). ${HTML_JSON_HINT} Detalle: ${em.slice(0, 80)}`,
+      message: `JSON no válido (HTTP ${httpStatus}). ${HTML_JSON_HINT}${urlInfo} Detalle: ${em.slice(0, 80)}`,
     };
   }
 }
@@ -111,17 +156,18 @@ async function postGoogleScript(
   body: Record<string, unknown>,
   options?: { signal?: AbortSignal }
 ): Promise<{ ok: true; data: any } | { ok: false; message: string }> {
-  if (!GOOGLE_SCRIPT_URL || GOOGLE_SCRIPT_URL === 'TU_URL_DE_GOOGLE_APPS_SCRIPT_AQUI') {
-    return { ok: false, message: 'Por favor configura GOOGLE_SCRIPT_URL en googleSheetsService.ts' };
+  const scriptUrl = await getGoogleScriptUrl();
+  if (!scriptUrl || scriptUrl === 'TU_URL_DE_GOOGLE_APPS_SCRIPT_AQUI') {
+    return { ok: false, message: 'Por favor configura la URL del Apps Script en Gestión de datos.' };
   }
   try {
-    const response = await fetch(GOOGLE_SCRIPT_URL, {
+    const response = await fetch(scriptUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(body),
       signal: options?.signal,
     });
-    return parseGoogleScriptBody(await response.text(), response.status);
+    return parseGoogleScriptBody(await response.text(), response.status, scriptUrl);
   } catch (e) {
     const err = e as Error;
     if (err?.name === 'AbortError') {
@@ -132,7 +178,7 @@ async function postGoogleScript(
 }
 
 // ⚠️ CONFIGURACIÓN REQUERIDA: Reemplaza con la URL de tu Google Apps Script
-const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwxPk0TuWza1MCn036IPRbXoYqjUyVbvBJXsPil4Bny2QMy932HFEEqSVR8TrLcrPB-xQ/exec';
+const DEFAULT_GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwxPk0TuWza1MCn036IPRbXoYqjUyVbvBJXsPil4Bny2QMy932HFEEqSVR8TrLcrPB-xQ/exec';
 
 // ID del libro de Google Sheets del que importar / al que exportar
 const SPREADSHEET_ID = '1KpaCmUQH5JFjUJ7P26MVH4CRxSkpHpMvYRxZs1RddtQ';
