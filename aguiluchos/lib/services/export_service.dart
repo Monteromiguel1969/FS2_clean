@@ -10,6 +10,7 @@ import 'package:pdf/widgets.dart' as pw;
 
 import '../models/nido_constants.dart';
 import '../models/nido_grefa_model.dart';
+import 'app_directories.dart';
 
 /// Totales del resumen ejecutivo del informe.
 class ResumenCampana {
@@ -315,7 +316,7 @@ class ExportService {
 
   /// Guarda en un directorio persistente de la app (almacenamiento local).
   Future<File> guardarEnApp(Uint8List bytes, String nombre) async {
-    final base = await getApplicationDocumentsDirectory();
+    final base = await appDataDirectory();
     final dir = Directory(p.join(base.path, 'aguiluchos_exportaciones'));
     if (!await dir.exists()) await dir.create(recursive: true);
     final file = File(p.join(dir.path, nombre));

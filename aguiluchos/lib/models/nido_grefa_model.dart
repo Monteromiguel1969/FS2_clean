@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
+import '../utils/utm.dart';
 import 'nido_constants.dart';
 
 /// Fases de la campaña en las que se agrupan las 42 columnas de un nido.
@@ -161,10 +162,10 @@ class NidoGrefaModel {
   String? especie;
   String? territorio;
 
-  /// Longitud (WGS84, grados decimales).
+  /// Este UTM en metros (ETRS89; huso 29/30 inferido, ver [Utm]).
   double? coordenadaX;
 
-  /// Latitud (WGS84, grados decimales).
+  /// Norte UTM en metros.
   double? coordenadaY;
   String? sustrato;
 
@@ -225,7 +226,22 @@ class NidoGrefaModel {
     }
   }
 
-  bool get tieneCoordenadas => coordenadaX != null && coordenadaY != null;
+  bool get tieneCoordenadas =>
+      coordenadaX != null &&
+      coordenadaY != null &&
+      Utm.esPlausible(coordenadaX!, coordenadaY!);
+
+  /// Posición WGS84 (para mapa y Google Maps) calculada desde el UTM.
+  LatLon? get latLon => tieneCoordenadas
+      ? Utm.toLatLon(coordenadaX!, coordenadaY!)
+      : null;
+
+  /// Guarda una posición WGS84 (p. ej. del GPS) como UTM en metros enteros.
+  void setLatLon(double lat, double lon) {
+    final u = Utm.fromLatLon(lat, lon);
+    coordenadaX = u.x.roundToDouble();
+    coordenadaY = u.y.roundToDouble();
+  }
 
   /// Fecha usada para filtrar por rango de campaña.
   DateTime? get fechaReferencia =>
@@ -237,12 +253,9 @@ class NidoGrefaModel {
     if (url != null && url.isNotEmpty) {
       return Uri.tryParse(url.startsWith('http') ? url : 'https://$url');
     }
-    if (tieneCoordenadas) {
-      return Uri.parse(
-        'https://www.google.com/maps/search/?api=1&query=$coordenadaY,$coordenadaX',
-      );
-    }
-    return null;
+    final p = latLon;
+    if (p == null) return null;
+    return Uri.parse(urlDesdeCoordenadas(p.lat, p.lon));
   }
 
   static String urlDesdeCoordenadas(double lat, double lon) =>
@@ -264,8 +277,7 @@ class NidoGrefaModel {
     vuelanPollos = (numPollosVolados ?? 0) > 0;
   }
 
-  /// Comprueba la coherencia de los datos. Devuelve la lista de problemas
-  /// (vacía si es válido).
+  /// Errores que impiden guardar (datos imposibles o incoherencias de totales).
   List<String> validar() {
     final e = <String>[];
     if ((etiqueta ?? '').trim().isEmpty) {
@@ -286,48 +298,52 @@ class NidoGrefaModel {
     contadores.forEach((k, v) {
       if (v != null && v < 0) e.add('$k no puede ser negativo.');
     });
-    final y = coordenadaY;
-    final x = coordenadaX;
-    if (y != null && (y < -90 || y > 90)) {
-      e.add('La latitud debe estar entre -90 y 90.');
-    }
-    if (x != null && (x < -180 || x > 180)) {
-      e.add('La longitud debe estar entre -180 y 180.');
-    }
     if ((coordenadaX == null) != (coordenadaY == null)) {
-      e.add('Indica latitud y longitud, o ninguna de las dos.');
-    }
-    if (numHuevosEntrada != null &&
-        tamanoPuesta != null &&
-        numHuevosEntrada! > tamanoPuesta!) {
-      e.add('Los huevos a la entrada no pueden superar el tamaño de puesta.');
-    }
-    if (tamanoPuesta != null &&
-        numPollosNacidos != null &&
-        numPollosNacidos! + (numHuevosNoEclosionados ?? 0) > tamanoPuesta!) {
-      e.add('Pollos nacidos + huevos no eclosionados superan el tamaño de puesta.');
+      e.add('Indica coordenada X e Y (UTM), o ninguna de las dos.');
+    } else if (coordenadaX != null &&
+        !Utm.esPlausible(coordenadaX!, coordenadaY!)) {
+      e.add('Las coordenadas UTM no son plausibles para España '
+          '(X entre 100000 y 900000, Y entre 2900000 y 4900000).');
     }
     final volados = numPollosVolados ?? 0;
     final muertos = numPollosMuertos ?? 0;
     if (numPollosNacidos != null && volados + muertos > numPollosNacidos!) {
       e.add('Pollos volados + muertos ($volados + $muertos) superan los pollos nacidos (${numPollosNacidos!}).');
     }
-    if (fechaIncubacion != null &&
-        fechaEclosion != null &&
-        fechaEclosion!.isBefore(fechaIncubacion!)) {
-      e.add('La fecha de eclosión no puede ser anterior a la de incubación.');
-    }
     if (tipoAccionesManejo.isNotEmpty && !intervencion) {
       e.add('Hay acciones de manejo seleccionadas pero no se marcó Intervención.');
     }
+    return e;
+  }
+
+  /// Incoherencias probables que el operario puede confirmar y guardar igual
+  /// (los datos históricos de campaña contienen casos así).
+  List<String> advertencias() {
+    final w = <String>[];
+    if (numHuevosEntrada != null &&
+        tamanoPuesta != null &&
+        numHuevosEntrada! > tamanoPuesta!) {
+      w.add('Los huevos a la entrada superan el tamaño de puesta.');
+    }
+    if (tamanoPuesta != null &&
+        numPollosNacidos != null &&
+        numPollosNacidos! + (numHuevosNoEclosionados ?? 0) > tamanoPuesta!) {
+      w.add('Pollos nacidos + huevos no eclosionados superan el tamaño de puesta.');
+    }
+    if (fechaIncubacion != null &&
+        fechaEclosion != null &&
+        fechaEclosion!.isBefore(fechaIncubacion!)) {
+      w.add('La fecha de eclosión es anterior a la de incubación.');
+    }
     if (resultadoReproductivo == ResultadoReproductivo.fracaso &&
         (causasFracaso ?? '').isEmpty) {
-      e.add('Indica la causa del fracaso.');
+      w.add('Resultado Fracaso sin causa de fracaso indicada.');
     }
-    if (resultadoReproductivo == ResultadoReproductivo.exito && volados <= 0) {
-      e.add('Un nido con resultado Éxito debe tener pollos volados.');
+    if (resultadoReproductivo == ResultadoReproductivo.exito &&
+        (numPollosVolados ?? 0) <= 0) {
+      w.add('Resultado Éxito sin pollos volados.');
     }
-    return e;
+    return w;
   }
 
   // ── Serialización ────────────────────────────────────────────────────────
@@ -523,8 +539,8 @@ final List<NidoColumn> nidoColumns = List.unmodifiable(<NidoColumn>[
   _text('referencia_catastral', 'Referencia catastral', _f1, (n) => n.referenciaCatastral, (n, v) => n.referenciaCatastral = v),
   _text('especie', 'Especie', _f1, (n) => n.especie, (n, v) => n.especie = v),
   _text('territorio', 'Territorio', _f1, (n) => n.territorio, (n, v) => n.territorio = v),
-  _real('coordenada_x', 'Coordenada X (longitud)', _f1, (n) => n.coordenadaX, (n, v) => n.coordenadaX = v),
-  _real('coordenada_y', 'Coordenada Y (latitud)', _f1, (n) => n.coordenadaY, (n, v) => n.coordenadaY = v),
+  _real('coordenada_x', 'Coordenada X (UTM Este)', _f1, (n) => n.coordenadaX, (n, v) => n.coordenadaX = v),
+  _real('coordenada_y', 'Coordenada Y (UTM Norte)', _f1, (n) => n.coordenadaY, (n, v) => n.coordenadaY = v),
   _text('sustrato', 'Sustrato', _f1, (n) => n.sustrato, (n, v) => n.sustrato = v),
   // Fase 2 (5)
   _date('fecha_incubacion', 'Fecha de incubación', _f2, (n) => n.fechaIncubacion, (n, v) => n.fechaIncubacion = v),

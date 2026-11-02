@@ -4,12 +4,12 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/nido_constants.dart';
 import '../models/nido_filter.dart';
+import 'app_directories.dart';
 import '../models/nido_grefa_model.dart';
 
 /// Persistencia local (SQLite). Fuente de verdad de la app: todo se lee y
@@ -81,7 +81,7 @@ CREATE TABLE $nidosTable (
   }
 
   Future<String> _defaultPath() async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await appDataDirectory();
     return p.join(dir.path, _dbName);
   }
 

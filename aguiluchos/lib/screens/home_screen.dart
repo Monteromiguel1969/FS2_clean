@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../app/app_services.dart';
 import '../models/nido_constants.dart';
 import '../models/nido_filter.dart';
 import '../models/nido_grefa_model.dart';
+import '../services/excel_import_service.dart';
 import '../widgets/nido_card.dart';
 import '../widgets/nidos_map.dart';
 import '../widgets/responsive.dart';
@@ -91,6 +93,36 @@ class _HomeScreenState extends State<HomeScreen> {
     messenger.showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  Future<void> _importarExcel() async {
+    final services = AppServices.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final file = await openFile(acceptedTypeGroups: const [
+      XTypeGroup(
+        label: 'Excel',
+        extensions: ['xlsx'],
+        mimeTypes: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        ],
+        uniformTypeIdentifiers: ['org.openxmlformats.spreadsheetml.sheet'],
+      ),
+    ]);
+    if (file == null || !mounted) return;
+    try {
+      final report =
+          await ExcelImportService().importar(services.db, await file.readAsBytes());
+      services.sync.requestSync();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => _ImportDialog(report: report),
+      );
+    } on FormatException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Excel no válido: ${e.message}')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('No se pudo importar: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final services = AppServices.of(context);
@@ -119,7 +151,22 @@ class _HomeScreenState extends State<HomeScreen> {
                 MaterialPageRoute(builder: (_) => const ExportScreen())),
             icon: const Icon(Icons.ios_share),
           ),
-          const SizedBox(width: 4),
+          PopupMenuButton<String>(
+            tooltip: 'Más opciones',
+            onSelected: (v) {
+              if (v == 'importar') _importarExcel();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'importar',
+                child: ListTile(
+                  leading: Icon(Icons.upload_file),
+                  title: Text('Importar desde Excel (.xlsx)'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -290,6 +337,53 @@ class _Filtros extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(child: estado),
         ]),
+      ],
+    );
+  }
+}
+
+class _ImportDialog extends StatelessWidget {
+  const _ImportDialog({required this.report});
+  final ImportReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = report.parse;
+    return AlertDialog(
+      icon: const Icon(Icons.upload_file),
+      title: const Text('Importación terminada'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('${report.nuevos} nidos nuevos importados.'),
+              if (report.yaExistentes > 0)
+                Text('${report.yaExistentes} ya existían y no se han modificado.'),
+              if (p.filasOmitidas > 0)
+                Text('${p.filasOmitidas} filas vacías omitidas.'),
+              if (p.columnasNoReconocidas.isNotEmpty)
+                Text('Columnas ignoradas: ${p.columnasNoReconocidas.join(', ')}.'),
+              if (p.avisos.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('${p.avisos.length} avisos de datos:',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                for (final a in p.avisos.take(30))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('• $a', style: const TextStyle(fontSize: 12)),
+                  ),
+                if (p.avisos.length > 30) Text('… y ${p.avisos.length - 30} más.'),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        FilledButton(
+            onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
       ],
     );
   }
