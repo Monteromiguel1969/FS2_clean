@@ -9,6 +9,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
 import '../logic/exportacion.dart';
+import '../logic/texto.dart';
 import '../models/nido_campo.dart';
 import '../models/nido_grefa_model.dart';
 import 'directorios.dart';
@@ -273,10 +274,7 @@ class ExportService {
                 for (final n in nidos)
                   [
                     n.titulo,
-                    [
-                      n.municipio,
-                      n.provincia,
-                    ].where((e) => (e ?? '').trim().isNotEmpty).join(', '),
+                    _lugar(n),
                     n.especie ?? '',
                     n.estadoReproductivo.etiqueta,
                     '${n.numPollosNacidos ?? 0}',
@@ -290,6 +288,14 @@ class ExportService {
       ),
     );
     return doc.save();
+  }
+
+  /// "Municipio, Provincia" sin repetir cuando ambos coinciden.
+  static String _lugar(NidoGrefaModel n) {
+    final m = (n.municipio ?? '').trim();
+    final p = (n.provincia ?? '').trim();
+    if (p.isEmpty || normalizarTexto(p) == normalizarTexto(m)) return m;
+    return m.isEmpty ? p : '$m, $p';
   }
 
   // --------------------------------------------------- Guardar / compartir

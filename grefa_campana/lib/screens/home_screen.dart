@@ -110,17 +110,17 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ],
           ),
-          floatingActionButton: _vista == _Vista.exportar && escritorio
-              ? null
-              : FloatingActionButton.extended(
-                  onPressed: () => _abrirNido(null, escritorio: escritorio),
-                  label: const Text('➕ Nuevo Nido'),
-                ),
+          floatingActionButton: escritorio ? null : _botonNuevoNido(false),
           body: escritorio ? _cuerpoEscritorio() : _cuerpoMovil(),
         );
       },
     );
   }
+
+  Widget _botonNuevoNido(bool escritorio) => FloatingActionButton.extended(
+    onPressed: () => _abrirNido(null, escritorio: escritorio),
+    label: const Text('➕ Nuevo Nido'),
+  );
 
   // ---------------------------------------------------------------- móvil
 
@@ -221,15 +221,21 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         SizedBox(
           width: 440,
-          child: Column(
-            children: [
-              FiltrosBar(controller: nidos),
-              Expanded(
-                child: nidos.cargando
-                    ? const Center(child: CircularProgressIndicator())
-                    : _lista(nidos.filtrados, escritorio: true),
-              ),
-            ],
+          // Scaffold propio para que el botón flotante quede sobre la lista y
+          // no tape el botón "Guardar Nido" de la ficha.
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            floatingActionButton: _botonNuevoNido(true),
+            body: Column(
+              children: [
+                FiltrosBar(controller: nidos),
+                Expanded(
+                  child: nidos.cargando
+                      ? const Center(child: CircularProgressIndicator())
+                      : _lista(nidos.filtrados, escritorio: true),
+                ),
+              ],
+            ),
           ),
         ),
         const VerticalDivider(width: 1),
@@ -258,19 +264,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _mapaEscritorio(NidosController nidos) {
-    return Column(
-      children: [
-        FiltrosBar(controller: nidos),
-        Expanded(
-          child: NidosMap(
-            nidos: nidos.filtrados,
-            onAbrirNido: (n) {
-              setState(() => _vista = _Vista.lista);
-              _abrirNido(n, escritorio: true);
-            },
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: _botonNuevoNido(true),
+      body: Column(
+        children: [
+          FiltrosBar(controller: nidos),
+          Expanded(
+            child: NidosMap(
+              nidos: nidos.filtrados,
+              onAbrirNido: (n) {
+                setState(() => _vista = _Vista.lista);
+                _abrirNido(n, escritorio: true);
+              },
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
