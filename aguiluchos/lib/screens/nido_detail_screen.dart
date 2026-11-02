@@ -8,6 +8,7 @@ import '../models/nido_grefa_model.dart';
 import '../services/image_storage_service.dart';
 import '../services/location_service.dart';
 import '../services/photo_picker.dart';
+import '../utils/utm.dart';
 import '../widgets/image_picker_widget.dart';
 import '../widgets/maps_launcher.dart';
 import '../widgets/responsive.dart';
@@ -71,8 +72,14 @@ class _NidoDetailScreenState extends State<NidoDetailScreen>
 
   TextEditingController _ctrl(String key) => _ctrls.putIfAbsent(key, () {
         final v = nidoColumnByKey(key).read(_nido);
-        return TextEditingController(text: v == null ? '' : '$v');
+        return TextEditingController(text: _fmt(v));
       });
+
+  static String _fmt(Object? v) {
+    if (v == null) return '';
+    if (v is double && v == v.roundToDouble()) return v.toInt().toString();
+    return '$v';
+  }
 
   void _setText(String key, String text) {
     _ctrl(key).text = text;
@@ -85,7 +92,7 @@ class _NidoDetailScreenState extends State<NidoDetailScreen>
       case NidoColumnType.integer:
         col.write(_nido, int.tryParse(t));
       case NidoColumnType.real:
-        col.write(_nido, double.tryParse(t.replaceAll(',', '.')));
+        col.write(_nido, double.tryParse(t.replaceAll(' ', '').replaceAll(',', '.')));
       default:
         col.write(_nido, t.isEmpty ? null : raw);
     }
@@ -261,7 +268,7 @@ class _NidoDetailScreenState extends State<NidoDetailScreen>
             label: 'Etiqueta *',
             validator: (v) =>
                 (v ?? '').trim().isEmpty ? 'La etiqueta es obligatoria' : null),
-        _field('proyecto'),
+        _desplegable('proyecto', Proyectos.todos),
         _field('propietario'),
         _field('tlfn',
             keyboard: TextInputType.phone,
@@ -270,29 +277,21 @@ class _NidoDetailScreenState extends State<NidoDetailScreen>
         _field('provincia'),
         _field('referencia_catastral'),
         _desplegable('especie', Especies.todas),
-        _field('territorio'),
+        _desplegable('territorio', Territorios.todos),
         _desplegable('sustrato', Sustratos.todos),
       ]),
       const SectionTitle('Localización'),
       FormGrid(children: [
-        _field('coordenada_y',
-            label: 'Latitud (coordenada Y)',
-            keyboard: const TextInputType.numberWithOptions(decimal: true, signed: true),
-            formatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,\-]'))],
-            validator: (v) {
-              final d = double.tryParse((v ?? '').replaceAll(',', '.'));
-              if ((v ?? '').isEmpty) return null;
-              return d == null || d < -90 || d > 90 ? 'Latitud inválida (-90 a 90)' : null;
-            }),
         _field('coordenada_x',
-            label: 'Longitud (coordenada X)',
-            keyboard: const TextInputType.numberWithOptions(decimal: true, signed: true),
-            formatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,\-]'))],
-            validator: (v) {
-              final d = double.tryParse((v ?? '').replaceAll(',', '.'));
-              if ((v ?? '').isEmpty) return null;
-              return d == null || d < -180 || d > 180 ? 'Longitud inválida (-180 a 180)' : null;
-            }),
+            label: 'Coordenada X (UTM Este, m)',
+            keyboard: TextInputType.number,
+            formatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+            validator: (v) => _validarUtm(v, Utm.minEasting, Utm.maxEasting)),
+        _field('coordenada_y',
+            label: 'Coordenada Y (UTM Norte, m)',
+            keyboard: TextInputType.number,
+            formatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+            validator: (v) => _validarUtm(v, Utm.minNorthing, Utm.maxNorthing)),
         _field('google_maps_url', keyboard: TextInputType.url),
       ]),
       const SizedBox(height: 12),
@@ -314,6 +313,15 @@ class _NidoDetailScreenState extends State<NidoDetailScreen>
         ),
       ]),
     ]);
+  }
+
+  String? _validarUtm(String? v, double min, double max) {
+    final t = (v ?? '').trim();
+    if (t.isEmpty) return null;
+    final d = double.tryParse(t.replaceAll(' ', '').replaceAll(',', '.'));
+    return d == null || d < min || d > max
+        ? 'Fuera de rango (${min.toInt()} a ${max.toInt()})'
+        : null;
   }
 
   Widget _tabIncubacion() {
@@ -514,8 +522,9 @@ class _NidoDetailScreenState extends State<NidoDetailScreen>
     setState(() => _locating = true);
     try {
       final pos = await location.posicionActual();
-      _setText('coordenada_y', pos.latitude.toStringAsFixed(6));
-      _setText('coordenada_x', pos.longitude.toStringAsFixed(6));
+      final tmp = NidoGrefaModel()..setLatLon(pos.latitude, pos.longitude);
+      _setText('coordenada_x', _fmt(tmp.coordenadaX));
+      _setText('coordenada_y', _fmt(tmp.coordenadaY));
       _setText('google_maps_url',
           NidoGrefaModel.urlDesdeCoordenadas(pos.latitude, pos.longitude));
       messenger.showSnackBar(SnackBar(
@@ -547,6 +556,32 @@ class _NidoDetailScreenState extends State<NidoDetailScreen>
         ),
       );
 
+  Future<bool> _confirmarAdvertencias(List<String> avisos) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.warning_amber),
+        title: const Text('Datos dudosos'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [for (final a in avisos) Text('• $a\n')],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Revisar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Guardar de todos modos')),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _guardar() async {
     final services = AppServices.of(context);
     final nav = Navigator.of(context);
@@ -559,6 +594,9 @@ class _NidoDetailScreenState extends State<NidoDetailScreen>
           : errores);
       return;
     }
+    final avisos = _nido.advertencias();
+    if (avisos.isNotEmpty && !await _confirmarAdvertencias(avisos)) return;
+    if (!mounted) return;
     setState(() => _saving = true);
     try {
       await services.db.guardar(_nido);

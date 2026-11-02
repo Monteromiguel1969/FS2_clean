@@ -20,8 +20,8 @@ NidoGrefaModel completo() {
     ..referenciaCatastral = '28001A001000010000XX'
     ..especie = Especies.cenizo
     ..territorio = 'T-4'
-    ..coordenadaX = -3.7038
-    ..coordenadaY = 40.4168
+    ..coordenadaX = 440000
+    ..coordenadaY = 4474000
     ..sustrato = 'Cereal'
     ..fechaIncubacion = DateTime(2026, 5, 1)
     ..fechaEclosion = DateTime(2026, 5, 31)
@@ -105,7 +105,7 @@ void main() {
       expect(json['fecha_incubacion'], '2026-05-01');
       expect(json['intervencion'], true);
       expect(json['tipo_acciones_manejo'], ['Dron', 'Rodal']);
-      expect(json['coordenada_x'], -3.7038);
+      expect(json['coordenada_x'], 440000.0);
       expect(json['imagenes_urls'], ['https://x/y/cosecha_b.jpg']);
       expect(json.containsKey('is_synced'), isFalse);
       expect(json.containsKey('has_conflict'), isFalse);
@@ -191,32 +191,42 @@ void main() {
       expect(completo().validar(), isEmpty);
     });
 
-    test('validar detecta incoherencias', () {
+    test('validar detecta errores que bloquean el guardado', () {
       final n = completo()
         ..etiqueta = ' '
         ..numPollosNacidos = 2
         ..coordenadaY = 123
-        ..fechaEclosion = DateTime(2026, 4, 1);
+        ..coordenadaX = 440000;
       n.recalcularTotales();
       final e = n.validar().join('|');
       expect(e, contains('etiqueta'));
       expect(e, contains('superan los pollos nacidos'));
-      expect(e, contains('latitud'));
-      expect(e, contains('eclosión'));
+      expect(e, contains('UTM'));
     });
 
-    test('Fracaso exige causa y Éxito exige pollos volados', () {
+    test('advertencias: incoherencias que se pueden confirmar', () {
+      expect(completo().advertencias(), isEmpty);
+      final n = completo()
+        ..fechaEclosion = DateTime(2026, 4, 1)
+        ..numHuevosEntrada = 9;
+      final w = n.advertencias().join('|');
+      expect(w, contains('eclosión'));
+      expect(w, contains('huevos a la entrada'));
+    });
+
+    test('Fracaso sin causa y Éxito sin volados generan advertencia', () {
       final f = NidoGrefaModel()
         ..etiqueta = 'x'
         ..resultadoReproductivo = ResultadoReproductivo.fracaso;
-      expect(f.validar().join(), contains('causa'));
-      f.causasFracaso = 'Depredación';
       expect(f.validar(), isEmpty);
+      expect(f.advertencias().join(), contains('causa'));
+      f.causasFracaso = 'Depredación';
+      expect(f.advertencias(), isEmpty);
 
       final e = NidoGrefaModel()
         ..etiqueta = 'x'
         ..resultadoReproductivo = ResultadoReproductivo.exito;
-      expect(e.validar().join(), contains('volados'));
+      expect(e.advertencias().join(), contains('volados'));
     });
 
     test('manejo sin intervención es incoherente', () {
@@ -226,12 +236,15 @@ void main() {
       expect(n.validar().join(), contains('Intervención'));
     });
 
-    test('URL de Google Maps: la guardada o una generada desde coordenadas', () {
+    test('URL de Google Maps: la guardada o una generada desde coordenadas UTM', () {
       final n = NidoGrefaModel()
-        ..coordenadaY = 40.5
-        ..coordenadaX = -3.5;
+        ..coordenadaX = 440000
+        ..coordenadaY = 4474000;
+      final p = n.latLon!;
       expect(n.googleMapsUri.toString(),
-          'https://www.google.com/maps/search/?api=1&query=40.5,-3.5');
+          'https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}');
+      expect(p.lat, closeTo(40.43, 0.1));
+      expect(p.lon, closeTo(-3.65, 0.1));
       n.googleMapsUrl = 'maps.app.goo.gl/xyz';
       expect(n.googleMapsUri.toString(), 'https://maps.app.goo.gl/xyz');
       expect(NidoGrefaModel().googleMapsUri, isNull);

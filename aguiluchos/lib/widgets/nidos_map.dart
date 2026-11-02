@@ -28,7 +28,10 @@ class _NidosMapState extends State<NidosMap> {
   List<NidoGrefaModel> get _conCoordenadas =>
       widget.nidos.where((n) => n.tieneCoordenadas).toList();
 
-  LatLng _pos(NidoGrefaModel n) => LatLng(n.coordenadaY!, n.coordenadaX!);
+  LatLng _pos(NidoGrefaModel n) {
+    final p = n.latLon!;
+    return LatLng(p.lat, p.lon);
+  }
 
   @override
   void didUpdateWidget(NidosMap old) {

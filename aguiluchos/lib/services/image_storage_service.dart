@@ -1,8 +1,9 @@
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+
+import 'app_directories.dart';
 
 /// Categorías de foto; se codifican como prefijo del nombre de archivo para
 /// poder repartir una única lista (`localImagePaths`) entre pestañas.
@@ -19,7 +20,7 @@ class ImageStorageService {
   final Directory? _base;
 
   Future<Directory> _directory() async {
-    final root = _base ?? await getApplicationDocumentsDirectory();
+    final root = _base ?? await appDataDirectory();
     final dir = Directory(p.join(root.path, 'aguiluchos_fotos'));
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;

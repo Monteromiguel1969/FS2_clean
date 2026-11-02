@@ -4,6 +4,16 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+		<key>NSCameraUsageDescription</key>
+	<string>Aguiluchos usa la cámara para fotografiar nidos y pollos durante el seguimiento.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Aguiluchos accede a tus fotos para adjuntarlas a un nido.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Aguiluchos usa tu ubicación para registrar las coordenadas GPS del nido.</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>https</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -15,7 +25,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>aguiluchos</string>
+	<string>Aguiluchos</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

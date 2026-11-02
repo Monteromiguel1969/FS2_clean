@@ -7,7 +7,17 @@ const int diasIncubacion = 30;
 abstract final class Especies {
   static const cenizo = 'Aguilucho cenizo';
   static const palido = 'Aguilucho pálido';
-  static const todas = [cenizo, palido];
+  static const lagunero = 'Aguilucho lagunero';
+  static const todas = [cenizo, palido, lagunero];
+
+  /// Normaliza las variantes escritas a mano ("A.Cenizo", "A. pálido"...).
+  static String? normalizar(String? raw) {
+    final t = (raw ?? '').toLowerCase();
+    if (t.contains('cenizo')) return cenizo;
+    if (t.contains('pálido') || t.contains('palido')) return palido;
+    if (t.contains('lagunero')) return lagunero;
+    return null;
+  }
 }
 
 abstract final class ResultadoReproductivo {
@@ -37,38 +47,51 @@ abstract final class TiposManejo {
 abstract final class CausasFracaso {
   static const todas = [
     'Depredación',
-    'Cosechadora / maquinaria agrícola',
-    'Abandono del nido',
-    'Inclemencias meteorológicas',
-    'Huevos no viables',
-    'Molestias humanas',
-    'Enfermedad / parásitos',
-    'Causa desconocida',
+    'Abandono',
+    'Huevos infértiles',
+    'Cosecha',
+    'Cosecha en verde',
+    'Parcela cosechada',
+    'Parcela arada',
+    'Incendio parcela',
+    'Desconocidas',
     'Otra',
   ];
 }
 
 abstract final class EstadosFinales {
-  static const todos = [
-    'En incubación',
-    'Con pollos',
-    'Pollos volados',
-    'Fracasado',
-    'Nido no localizado',
-  ];
+  static const conExito = 'Reproducción con éxito';
+  static const sinExito = 'Reproducción sin éxito';
+  static const noConstatada = 'Reproducción no constatada';
+  static const territorioDescartado = 'Territorio descartado';
+  static const todos = [conExito, sinExito, noConstatada, territorioDescartado];
 }
 
 abstract final class EstadosFracaso {
-  static const todos = ['Total', 'Parcial'];
+  static const huevos = 'Huevos';
+  static const pollos = 'Pollos';
+  static const pollosYHuevos = 'Pollos y huevos';
+  static const todos = [huevos, pollos, pollosYHuevos];
+}
+
+abstract final class Territorios {
+  static const todos = ['Seguro', 'Probable', 'Posible', 'Descartado'];
+}
+
+abstract final class Proyectos {
+  static const todos = ['LIFE', 'Compensatorias', 'USANOS'];
 }
 
 abstract final class Sustratos {
   static const todos = [
-    'Cereal',
+    'Cebada',
+    'Trigo',
+    'Avena',
+    'Erial',
     'Barbecho',
     'Pastizal',
+    'Herbazal',
     'Matorral',
-    'Cultivo de regadío',
     'Otro',
   ];
 }
