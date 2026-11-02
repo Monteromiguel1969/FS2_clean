@@ -6,6 +6,7 @@ import 'app/aguiluchos_app.dart';
 import 'config/env.dart';
 import 'services/database_service.dart';
 import 'services/remote_nidos_gateway.dart';
+import 'services/seed_service.dart';
 import 'services/sync_service.dart';
 
 Future<void> main() async {
@@ -15,6 +16,7 @@ Future<void> main() async {
   DatabaseService.configureDesktopFactory();
   final db = DatabaseService();
   await db.init();
+  await SeedService().cargarSiProcede(db);
 
   // Supabase solo se inicializa si hay credenciales reales. Sin ellas (o sin
   // red al arrancar) la app funciona igualmente en modo solo-local.

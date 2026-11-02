@@ -46,3 +46,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Datos de campaña con datos personales: nunca al repositorio (público).
+/assets/seed/*.xlsx
+/releases/

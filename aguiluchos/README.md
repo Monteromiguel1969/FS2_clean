@@ -183,3 +183,15 @@ archivos) se ofrece guardar.
   coordenadas UTM.
 * No hay login de usuarios (ver "Configurar Supabase").
 * Las fotos eliminadas en la app se quitan de la ficha pero no del bucket de Storage.
+
+## APK con los datos de la campaña y script de Windows
+
+- `assets/seed/datos_campana.xlsx` (ignorado por git: contiene datos personales) se empaqueta en la APK
+  y se importa **una sola vez** en el primer arranque (`SeedService`). Sin ese fichero la app arranca vacía.
+- `scripts/compilar_e_instalar.ps1` compila `app-release.apk`, la deja en `C:\AGUILUCHO\aguiluchos.apk`,
+  copia una versión en `C:\AGUILUCHO\Releases\` y la instala por USB con `adb`:
+
+```powershell
+.\scripts\compilar_e_instalar.ps1 -Excel "C:\ruta\DATOS_FINALES_AGUILUCHO_2026_GREFA.xlsx" `
+    -SupabaseUrl "https://xxxx.supabase.co" -SupabaseAnonKey "eyJ..."
+```
