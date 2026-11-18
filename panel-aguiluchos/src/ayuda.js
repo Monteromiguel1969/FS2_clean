@@ -175,7 +175,7 @@ export const MANUAL = [
   <li>Debajo del título se indica cuántos nidos están ubicados y cuántos <b>no tienen coordenadas</b> (esos no se dibujan).</li>
   <li><b>Color</b> (solo con contratos): elige entre <i>Resultado de la nidificación</i> (verde éxito, rojo fracaso, naranja en curso) o <i>Contrato de la parcela</i> (verde firmado, naranja pendiente o a punto de caducar, rojo sin contrato, gris sin parcela).</li>
   <li>El mapa se reencuadra al cambiar los filtros, no en cada actualización en vivo.</li>
-  <li>El fondo es de OpenStreetMap: necesita conexión a internet.</li>
+  <li>El selector <b>Fondo</b> de la cabecera cambia entre <i>Mapa</i> (OpenStreetMap) y <i>Ortofoto</i> (PNOA, Instituto Geográfico Nacional). Afecta también a los mapas de los informes y se recuerda en este navegador. Necesita conexión a internet.</li>
 </ul>`,
   },
   {
@@ -297,7 +297,7 @@ export const MANUAL = [
   <li>Elige los <b>mapas de localización</b>: general, por comunidades, por provincias y/o por localidades. Más niveles = más mapas y más tiempo de generación.</li>
   <li>Pulsa <b>Generar borrador</b> y revisa el documento en el editor. Ver ${enl('informe-editor', 'editor de informes')}.</li>
 </ol>
-<p class="ay-nota">Los mapas usan el fondo de OpenStreetMap; sin conexión solo se dibujan los puntos. Los nidos sin coordenadas se mencionan pero no se dibujan.</p>`,
+<p class="ay-nota">Los mapas usan el fondo que elijas en el selector <b>Fondo</b> (Mapa de OpenStreetMap u Ortofoto PNOA del IGN); sin conexión solo se dibujan los puntos. Los nidos sin coordenadas se mencionan pero no se dibujan.</p>`,
   },
   {
     id: 'informe-editor', grupo: 'informes', titulo: 'Editor de documentos (informes, borradores de convenio y RGPD)',

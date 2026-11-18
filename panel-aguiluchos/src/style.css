@@ -186,3 +186,7 @@ dialog.dlg-ayuda::backdrop { background: rgba(0,0,0,.45); }
 #imp-cuerpo details { margin: 6px 0; }
 #imp-cuerpo summary { cursor: pointer; font-weight: 600; }
 #imp-cuerpo ul { margin: 6px 0 6px 18px; padding: 0; }
+
+.sel-fondo { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: #fff; }
+.sel-fondo select { padding: 4px 6px; border-radius: 6px; border: 1px solid var(--borde); }
+fieldset .sel-fondo { color: var(--texto); margin-top: 6px; }

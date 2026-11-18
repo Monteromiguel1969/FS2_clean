@@ -1,11 +1,11 @@
 // Mapas de localización como imagen PNG (data URL) para incrustarlos en los
-// informes: teselas de OpenStreetMap (si hay conexión) + nidos coloreados por
+// informes: teselas del fondo elegido (OpenStreetMap u ortofoto PNOA, si hay conexión) + nidos coloreados por
 // resultado. Sin teselas se dibuja igualmente sobre un fondo neutro con cuadrícula.
 import { estadoReproductivo, posicion } from './logic.js';
+import { FONDOS, FONDO_DEFECTO, urlTesela } from './fondo.js';
 
 export const COLOR_ESTADO = { Éxito: '#2e6b3a', Fracaso: '#c0392b', 'En curso': '#e08a1e' };
 const TILE = 256;
-const URL_TESELA = (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 
 /** Proyección Web Mercator: píxel «mundo» para un zoom. */
 export function proyectar(lat, lon, z) {
@@ -73,7 +73,7 @@ function cargarTesela(url) {
   return cache.get(url);
 }
 
-function dibujar(ctx, puntos, { ancho, alto, titulo, etiquetar }, teselas, enc) {
+function dibujar(ctx, puntos, { ancho, alto, titulo, etiquetar, fondo }, teselas, enc) {
   const { z, cx, cy } = enc;
   const ox = cx - ancho / 2;
   const oy = cy - alto / 2;
@@ -129,7 +129,7 @@ function dibujar(ctx, puntos, { ancho, alto, titulo, etiquetar }, teselas, enc) 
     ctx.fillText(titulo, 16, 25);
   }
   ctx.font = '10px Arial, sans-serif';
-  const atrib = teselas ? '© OpenStreetMap contributors' : 'Sin mapa base (sin conexión)';
+  const atrib = teselas ? (FONDOS[fondo] ?? FONDOS[FONDO_DEFECTO]).atribucion : 'Sin mapa base (sin conexión)';
   const wa = ctx.measureText(atrib).width + 8;
   ctx.fillStyle = 'rgba(255,255,255,.8)';
   ctx.fillRect(ancho - wa, alto - 15, wa, 15);
@@ -142,9 +142,9 @@ function dibujar(ctx, puntos, { ancho, alto, titulo, etiquetar }, teselas, enc) 
  * si no hay puntos.
  * @param {{lat:number, lon:number, color:string, etiqueta?:string}[]} puntos
  */
-export async function renderMapa(puntos, { ancho = 760, alto = 380, titulo = '', etiquetar = false, conTeselas = true } = {}) {
+export async function renderMapa(puntos, { ancho = 760, alto = 380, titulo = '', etiquetar = false, conTeselas = true, fondo = FONDO_DEFECTO } = {}) {
   if (!puntos.length) return null;
-  const opciones = { ancho, alto, titulo, etiquetar };
+  const opciones = { ancho, alto, titulo, etiquetar, fondo };
   const enc = encuadre(puntos, { ancho, alto });
   const canvas = document.createElement('canvas');
   canvas.width = ancho;
@@ -162,7 +162,7 @@ export async function renderMapa(puntos, { ancho = 760, alto = 380, titulo = '',
     for (let x = x0; x <= x1; x++) {
       for (let y = y0; y <= y1; y++) {
         const xm = ((x % n) + n) % n;
-        peticiones.push(cargarTesela(URL_TESELA(enc.z, xm, y)).then((img) => ({ x, y, img })));
+        peticiones.push(cargarTesela(urlTesela(fondo, enc.z, xm, y)).then((img) => ({ x, y, img })));
       }
     }
     teselas = await Promise.all(peticiones);
@@ -184,7 +184,7 @@ export async function renderMapa(puntos, { ancho = 760, alto = 380, titulo = '',
  * @param {{general?:boolean, comunidad?:boolean, provincia?:boolean, localidad?:boolean}} niveles
  * @param {(hecho:number, total:number) => void} [progreso]
  */
-export async function generarMapas(nidos, niveles, agruparPorNivel, progreso = () => {}, tituloGeneral = 'Todos los nidos') {
+export async function generarMapas(nidos, niveles, agruparPorNivel, progreso = () => {}, tituloGeneral = 'Todos los nidos', fondo = FONDO_DEFECTO) {
   const trabajos = [];
   if (niveles.general) trabajos.push({ nivel: 'general', titulo: tituloGeneral, lista: nidos });
   for (const nivel of ['comunidad', 'provincia', 'localidad']) {
@@ -202,6 +202,7 @@ export async function generarMapas(nidos, niveles, agruparPorNivel, progreso = (
         alto: t.nivel === 'general' ? 400 : 330,
         titulo: t.titulo,
         etiquetar,
+        fondo,
       });
       mapas.push({ nivel: t.nivel, titulo: t.titulo, n: puntos.length, dataUrl });
     }

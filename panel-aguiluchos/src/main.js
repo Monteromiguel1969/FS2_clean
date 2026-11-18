@@ -8,6 +8,7 @@ import {
 } from './api.js';
 import { FASES, ESPECIES } from './columns.js';
 import { abrirExportarCsvUI } from './exportar_ui.js';
+import { FONDOS, guardarFondo, htmlSelectorFondo, leerFondo } from './fondo.js';
 import { abrirImportarUI } from './importar_ui.js';
 import { opcionesCascada } from './geo.js';
 import { abrirInformesUI } from './informe_ui.js';
@@ -29,6 +30,8 @@ const estado = {
   filtro: { texto: '', pais: '', comunidad: '', provincia: '', localidad: '', especie: '', proyecto: '', campana: '', estado: '', contrato: '' },
   contratos: null,
   colorMapa: 'resultado',
+  fondo: leerFondo(),
+  capaBase: null,
   orden: { clave: 'numeracion', asc: true },
   vista: 'tabla',
   mapa: null,
@@ -274,6 +277,7 @@ function pintarPanel() {
       <span class="en-vivo espera" id="en-vivo"></span>
       <button class="btn" id="btn-recargar" title="Volver a leer los datos">Actualizar</button>
       <button class="btn" id="btn-mapa" title="Ver todos los nidos en el mapa; al pinchar uno se abre su tarjeta">Mapa de nidos</button>
+      ${htmlSelectorFondo(estado.fondo, 'sel-fondo')}
       <button class="btn" id="btn-csv" title="Elegir los campos y descargar los nidos de la selección">Exportar CSV</button>
       <button class="btn" id="btn-importar" title="Importar nidos desde un Excel (.xlsx): cabeceras en la primera fila">Importar Excel</button>
       <input type="file" id="archivo-excel" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
@@ -301,6 +305,7 @@ function pintarPanel() {
     <dialog id="dlg-informe" class="informe-dlg"></dialog>`;
 
   document.getElementById('btn-recargar').onclick = recargar;
+  document.getElementById('sel-fondo').onchange = (ev) => aplicarFondo(ev.target.value);
   document.getElementById('btn-csv').onclick = exportarCsv;
   const selector = document.getElementById('archivo-excel');
   document.getElementById('btn-importar').onclick = () => selector.click();
@@ -478,6 +483,25 @@ function pintarTabla(lista) {
   };
 }
 
+function ponerCapaBase() {
+  if (!estado.mapa) return;
+  const f = FONDOS[estado.fondo];
+  if (estado.capaBase) estado.mapa.removeLayer(estado.capaBase);
+  estado.capaBase = L.tileLayer(f.plantilla, { maxZoom: f.zoomMax, attribution: f.atribucion }).addTo(estado.mapa);
+  estado.capaBase.bringToBack();
+}
+
+/** Cambia el fondo (Mapa / Ortofoto) del mapa del panel y de los informes, y lo recuerda. */
+function aplicarFondo(id) {
+  if (!guardarFondo(id) && !FONDOS[id]) return;
+  estado.fondo = id;
+  for (const sel of ['sel-fondo', 'inf-fondo']) {
+    const el = document.getElementById(sel);
+    if (el) el.value = id;
+  }
+  ponerCapaBase();
+}
+
 function destruirMapa() {
   if (estado.mapa) { estado.mapa.remove(); estado.mapa = null; }
   estado.huellaMapa = '';
@@ -492,10 +516,8 @@ function pintarMapa(lista) {
   }
   if (!estado.mapa) {
     estado.mapa = L.map('mapa').setView([40.4, -4.0], 6);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '© OpenStreetMap',
-    }).addTo(estado.mapa);
+    estado.capaBase = null;
+    ponerCapaBase();
     estado.capa = L.layerGroup().addTo(estado.mapa);
   }
   estado.capa.clearLayers();
@@ -722,6 +744,7 @@ function abrirInformes(op = {}) {
     todos: estado.nidos,
     filtros: describirFiltros(),
     geo: estado.filtro,
+    alCambiarFondo: aplicarFondo,
     email: estado.sesion?.user?.email ?? '',
     nido: op.nido ?? null,
   });

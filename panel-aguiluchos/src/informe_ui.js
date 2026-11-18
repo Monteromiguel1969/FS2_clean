@@ -6,6 +6,7 @@ import {
 import { agruparPorNivel } from './geo.js';
 import { posicion } from './logic.js';
 import { generarMapas, tituloMapaGeneral } from './mapa_img.js';
+import { guardarFondo, htmlSelectorFondo, leerFondo } from './fondo.js';
 import { ayudaBtn } from './ayuda.js';
 
 const CLAVE_FIRMA = 'aguiluchos.informeFirma';
@@ -44,7 +45,7 @@ export async function guardarArchivo(contenido, nombre, mime, ext) {
 }
 
 /**
- * @param {{dlg:HTMLDialogElement, seleccion:object[], todos:object[], filtros:string, geo?:object, email:string, nido?:object|null}} ctx
+ * @param {{dlg:HTMLDialogElement, seleccion:object[], todos:object[], filtros:string, geo?:object, alCambiarFondo?:(id:string)=>void, email:string, nido?:object|null}} ctx
  */
 export function abrirInformesUI(ctx) {
   const { dlg, nido } = ctx;
@@ -87,7 +88,8 @@ export function abrirInformesUI(ctx) {
             <label><input type="checkbox" name="inf-mapa" value="provincia"/> Por provincias</label>
             <label><input type="checkbox" name="inf-mapa" value="localidad"/> Por localidades</label>
           </div>
-          <div class="info">Se genera un mapa por grupo, con los nidos coloreados por resultado, sobre el mapa de OpenStreetMap (con conexión; sin ella solo se dibujan los puntos). Más niveles = más mapas y más tiempo.</div>
+          <div>${htmlSelectorFondo(leerFondo(), 'inf-fondo')}</div>
+          <div class="info">Se genera un mapa por grupo, con los nidos coloreados por resultado, sobre el fondo elegido: mapa (OpenStreetMap) u ortofoto (PNOA); con conexión, sin ella solo se dibujan los puntos. Más niveles = más mapas y más tiempo.</div>
         </fieldset>`}
       </div>
       <div class="dlg-pie">
@@ -95,6 +97,8 @@ export function abrirInformesUI(ctx) {
         <button type="submit" class="btn primario" id="inf-generar">Generar borrador</button>
       </div></form>`;
     document.getElementById('inf-cerrar').onclick = () => dlg.close();
+    const selFondo = document.getElementById('inf-fondo');
+    if (selFondo) selFondo.onchange = () => { guardarFondo(selFondo.value); ctx.alCambiarFondo?.(selFondo.value); };
     document.getElementById('inf-form').onsubmit = async (ev) => {
       ev.preventDefault();
       const aviso = (t) => { document.getElementById('inf-msg').textContent = t; };
@@ -117,7 +121,7 @@ export function abrirInformesUI(ctx) {
         let mapas = [];
         if (posicion(nido)) {
           aviso('Generando el mapa de localización…');
-          mapas = await generarMapas([nido], { general: true }, agruparPorNivel);
+          mapas = await generarMapas([nido], { general: true }, agruparPorNivel, undefined, undefined, leerFondo());
           mapas.forEach((m) => { m.titulo = nido.etiqueta || nido.numeracion || 'Nido'; });
         }
         cuerpo = construirInformeNido(nido, { ...opciones, mapas });
@@ -138,7 +142,7 @@ export function abrirInformesUI(ctx) {
         let mapas = [];
         if (Object.values(niveles).some(Boolean)) {
           mapas = await generarMapas(lista, niveles, agruparPorNivel, (h, t) => aviso(`Generando mapas de localización (${h}/${t})…`),
-            lista === ctx.todos ? 'Todos los nidos' : tituloMapaGeneral(ctx.geo));
+            lista === ctx.todos ? 'Todos los nidos' : tituloMapaGeneral(ctx.geo), leerFondo());
         }
         cuerpo = construirInforme(lista, {
           ...opciones,
