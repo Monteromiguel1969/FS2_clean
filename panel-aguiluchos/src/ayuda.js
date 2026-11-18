@@ -195,7 +195,7 @@ export const MANUAL = [
 <ul>
   <li>Si falta una columna o una celda está vacía, ese campo queda en blanco (o como estaba).</li>
   <li>Las columnas de más se ignoran. <b>Nunca se borra</b> ningún nido que no venga en el fichero.</li>
-  <li><b>Proyecto</b> y <b>Campaña</b> solo se asignan si el fichero trae esas columnas; si no, se dejan en blanco. Son campos distintos.</li>
+  <li><b>Proyecto</b> y <b>Campaña</b> solo se asignan si el fichero trae esas columnas; si no, se dejan en blanco. Son campos distintos. Una columna <b>Año</b> se toma como campaña (si hay también «Campaña», manda esta).</li>
   <li>Un nido que ya existe (misma numeración o etiqueta, con proyecto y campaña compatibles) solo se completa con las celdas que traen valor.</li>
   <li>La campaña necesita haber ejecutado <code>migracion_campana.sql</code> en Supabase.</li>
 </ul>`,

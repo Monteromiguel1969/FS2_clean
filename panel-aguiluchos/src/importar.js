@@ -41,7 +41,7 @@ const ALIAS = {
   pollosnacidos: 'num_pollos_nacidos', pollosvolados: 'num_pollos_volados', pollosmuertos: 'num_pollos_muertos',
   tipodeacciones: 'tipo_acciones_manejo', tipodemanejo: 'tipo_acciones_manejo', manejo: 'tipo_acciones_manejo',
   edad: 'edad_dias', edaddias: 'edad_dias',
-  temporada: 'campana', numero: 'numeracion', nido: 'numeracion',
+  temporada: 'campana', ano: 'campana', anyo: 'campana', numero: 'numeracion', nido: 'numeracion',
 };
 const PREFIJOS = [
   ['fechadeeclosion', 'fecha_eclosion'], ['fechadevuelo', 'fecha_vuelo'], ['fechadeincubacion', 'fecha_incubacion'],
@@ -89,13 +89,15 @@ export function mapearCabeceras(fila, columnas = COLUMNAS) {
   const reconocidas = [];
   const ignoradas = [];
   const pendientes = [];
+  // «Año» vale como campaña, pero si el fichero trae una columna «Campaña» propia, manda esa.
+  const hayCampanaPropia = (fila ?? []).some((c) => normalizar(c) === 'campana');
   (fila ?? []).forEach((cab, i) => {
     const texto = limpiar(cab).trim();
     if (!texto) return;
     const n = normalizar(texto);
     const key = nombres.get(n) ?? PREFIJOS.find(([p, k]) => n.startsWith(p) && disponibles.has(k))?.[1];
     if (!key) { pendientes.push({ i, texto, n }); return; }
-    if (key in indices) { ignoradas.push(texto); return; }
+    if (key in indices || (hayCampanaPropia && key === 'campana' && n !== 'campana')) { ignoradas.push(texto); return; }
     indices[key] = i;
     reconocidas.push({ cabecera: texto, key });
   });

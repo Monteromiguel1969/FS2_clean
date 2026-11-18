@@ -175,3 +175,21 @@ test('importar un .xlsx con «Campaña» en la primera columna asigna la campañ
     assert.deepEqual(plan.cabeceras.ignoradas, []);
   }
 });
+
+test('«Año» (o «Ano») se importa como campaña; si hay columna «Campaña», esa manda', async () => {
+  for (const h of ['Año', 'AÑO', 'Ano', ' año ', '\ufeffAño']) {
+    const m = mapearCabeceras([h, 'Numeración']);
+    assert.equal(m.indices.campana, 0, JSON.stringify(h));
+    assert.deepEqual(m.ignoradas, []);
+  }
+  const plan = await planificarImportacion([['Año', 'Numeración', 'Municipio'], [2025, '1', 'Toro'], [2024, '1', 'Toro']], []);
+  assert.equal(plan.trae.campana, true);
+  assert.deepEqual(plan.nuevos.map((n) => n.fila.campana), ['2025', '2024']);
+  assert.equal(plan.nuevos.length, 2);
+  const ambas = mapearCabeceras(['Año', 'Campaña']);
+  assert.equal(ambas.indices.campana, 1);
+  assert.deepEqual(ambas.ignoradas, ['Año']);
+  const blob = await writeExcelFile([['Año', 'Numeración'], [2025, '1']]).toBlob();
+  const real = await planificarImportacion(await leerHoja(blob), []);
+  assert.equal(real.nuevos[0].fila.campana, '2025');
+});
