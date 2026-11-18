@@ -20,9 +20,13 @@ export function proyectar(lat, lon, z) {
  * Zoom y centro para que todos los puntos quepan en ancho×alto con margen.
  * @param {{lat:number, lon:number}[]} puntos
  */
+export const ZOOM_DETALLE = 14;
+
 export function encuadre(puntos, { ancho, alto, margen = 46, zMin = 3, zMax = 15 }) {
   let z = zMax;
-  for (; z > zMin; z--) {
+  const unico = puntos.every((q) => q.lat === puntos[0].lat && q.lon === puntos[0].lon);
+  if (unico) z = Math.min(zMax, ZOOM_DETALLE);
+  for (; !unico && z > zMin; z--) {
     const p = puntos.map((q) => proyectar(q.lat, q.lon, z));
     const w = Math.max(...p.map((q) => q.x)) - Math.min(...p.map((q) => q.x));
     const h = Math.max(...p.map((q) => q.y)) - Math.min(...p.map((q) => q.y));
@@ -32,6 +36,15 @@ export function encuadre(puntos, { ancho, alto, margen = 46, zMin = 3, zMax = 15
   const cx = (Math.max(...p.map((q) => q.x)) + Math.min(...p.map((q) => q.x))) / 2;
   const cy = (Math.max(...p.map((q) => q.y)) + Math.min(...p.map((q) => q.y))) / 2;
   return { z, cx, cy };
+}
+
+/** Título del mapa general: el nivel geográfico más concreto que esté filtrado. */
+export function tituloMapaGeneral(geo = {}) {
+  if (geo.localidad) return `Localidad: ${geo.localidad}`;
+  if (geo.provincia) return `Provincia: ${geo.provincia}`;
+  if (geo.comunidad) return `Comunidad: ${geo.comunidad}`;
+  if (geo.pais && geo.pais !== 'España') return `País: ${geo.pais}`;
+  return 'Todos los nidos';
 }
 
 /** Puntos con coordenadas válidas de una lista de nidos. */
@@ -132,7 +145,7 @@ function dibujar(ctx, puntos, { ancho, alto, titulo, etiquetar }, teselas, enc) 
 export async function renderMapa(puntos, { ancho = 760, alto = 380, titulo = '', etiquetar = false, conTeselas = true } = {}) {
   if (!puntos.length) return null;
   const opciones = { ancho, alto, titulo, etiquetar };
-  const enc = encuadre(puntos, { ancho, alto, zMax: puntos.length === 1 ? 14 : 15 });
+  const enc = encuadre(puntos, { ancho, alto });
   const canvas = document.createElement('canvas');
   canvas.width = ancho;
   canvas.height = alto;
@@ -171,9 +184,9 @@ export async function renderMapa(puntos, { ancho = 760, alto = 380, titulo = '',
  * @param {{general?:boolean, comunidad?:boolean, provincia?:boolean, localidad?:boolean}} niveles
  * @param {(hecho:number, total:number) => void} [progreso]
  */
-export async function generarMapas(nidos, niveles, agruparPorNivel, progreso = () => {}) {
+export async function generarMapas(nidos, niveles, agruparPorNivel, progreso = () => {}, tituloGeneral = 'Todos los nidos') {
   const trabajos = [];
-  if (niveles.general) trabajos.push({ nivel: 'general', titulo: 'Todos los nidos', lista: nidos });
+  if (niveles.general) trabajos.push({ nivel: 'general', titulo: tituloGeneral, lista: nidos });
   for (const nivel of ['comunidad', 'provincia', 'localidad']) {
     if (!niveles[nivel]) continue;
     for (const [nombre, lista] of agruparPorNivel(nidos, nivel)) trabajos.push({ nivel, titulo: nombre, lista });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { agruparPorNivel, norm, opcionesCascada, ubicacion } from '../src/geo.js';
 import { filtrar } from '../src/logic.js';
-import { encuadre, proyectar, puntosDe } from '../src/mapa_img.js';
+import { encuadre, proyectar, puntosDe, tituloMapaGeneral } from '../src/mapa_img.js';
 import { agruparGeo, construirInforme, seccionMapas } from '../src/informe.js';
 
 const n = (municipio, provincia, extra = {}) => ({ id: `${municipio}-${provincia}`, etiqueta: municipio, municipio, provincia, ...extra });
@@ -112,4 +112,39 @@ test('informe: sección de mapas agrupada e imágenes incrustadas', () => {
   assert.match(doc, /2\. Resultados por comunidad autónoma/);
   assert.match(doc, /3\. Resultados por provincia/);
   assert.match(doc, /Castilla-La Mancha/);
+});
+
+test('mapa del informe: encuadra los nidos del filtro (comunidad, provincia, localidad) o todos', () => {
+  const geoPuntos = (f) => puntosDe(filtrar(conCoord, { texto: '', ...f }));
+  const conCoord = [
+    { id: 1, municipio: 'Portillo de Toledo', provincia: 'Toledo', coordenada_x: 400000, coordenada_y: 4430000 },
+    { id: 2, municipio: 'Guadalajara', provincia: 'Guadalajara', coordenada_x: 500000, coordenada_y: 4520000 },
+    { id: 3, municipio: 'Sanabria', provincia: 'Zamora', coordenada_x: 700000, coordenada_y: 4680000 },
+    { id: 4, municipio: 'Pinto', provincia: 'Madrid', coordenada_x: 440000, coordenada_y: 4460000 },
+  ];
+  const caja = { ancho: 760, alto: 400 };
+  const cabe = (pts, e) => pts.every((q) => {
+    const p = proyectar(q.lat, q.lon, e.z);
+    return Math.abs(p.x - e.cx) <= caja.ancho / 2 - 46 + 1 && Math.abs(p.y - e.cy) <= caja.alto / 2 - 46 + 1;
+  });
+  const todos = geoPuntos({});
+  const clm = geoPuntos({ comunidad: 'Castilla-La Mancha' });
+  const toledo = geoPuntos({ provincia: 'Toledo' });
+  const pinto = geoPuntos({ localidad: 'Pinto' });
+  assert.deepEqual([todos.length, clm.length, toledo.length, pinto.length], [4, 2, 1, 1]);
+  const ez = encuadre(todos, caja);
+  const ec = encuadre(clm, caja);
+  assert.ok(cabe(todos, ez) && cabe(clm, ec));
+  assert.ok(ec.z > ez.z, 'la comunidad se ve más cerca que todos los nidos');
+  // un solo nido: zoom de detalle, no el mundo entero
+  assert.equal(encuadre(toledo, caja).z, 14);
+  assert.equal(encuadre([pinto[0], pinto[0]], caja).z, 14);
+});
+
+test('título del mapa general según el filtro geográfico más concreto', () => {
+  assert.equal(tituloMapaGeneral({}), 'Todos los nidos');
+  assert.equal(tituloMapaGeneral({ pais: 'España' }), 'Todos los nidos');
+  assert.equal(tituloMapaGeneral({ comunidad: 'Galicia' }), 'Comunidad: Galicia');
+  assert.equal(tituloMapaGeneral({ comunidad: 'Galicia', provincia: 'Ourense' }), 'Provincia: Ourense');
+  assert.equal(tituloMapaGeneral({ comunidad: 'Galicia', provincia: 'Ourense', localidad: 'LIMIA' }), 'Localidad: LIMIA');
 });

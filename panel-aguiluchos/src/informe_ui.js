@@ -5,7 +5,7 @@ import {
 } from './informe.js';
 import { agruparPorNivel } from './geo.js';
 import { posicion } from './logic.js';
-import { generarMapas } from './mapa_img.js';
+import { generarMapas, tituloMapaGeneral } from './mapa_img.js';
 import { ayudaBtn } from './ayuda.js';
 
 const CLAVE_FIRMA = 'aguiluchos.informeFirma';
@@ -44,7 +44,7 @@ export async function guardarArchivo(contenido, nombre, mime, ext) {
 }
 
 /**
- * @param {{dlg:HTMLDialogElement, seleccion:object[], todos:object[], filtros:string, email:string, nido?:object|null}} ctx
+ * @param {{dlg:HTMLDialogElement, seleccion:object[], todos:object[], filtros:string, geo?:object, email:string, nido?:object|null}} ctx
  */
 export function abrirInformesUI(ctx) {
   const { dlg, nido } = ctx;
@@ -82,7 +82,7 @@ export function abrirInformesUI(ctx) {
         </fieldset>
         <fieldset><legend>Mapas de localización</legend>
           <div class="checks">
-            <label><input type="checkbox" name="inf-mapa" value="general" checked/> General (todos los nidos)</label>
+            <label><input type="checkbox" name="inf-mapa" value="general" checked/> General (encuadrado en los nidos del informe)</label>
             <label><input type="checkbox" name="inf-mapa" value="comunidad"/> Por comunidades autónomas</label>
             <label><input type="checkbox" name="inf-mapa" value="provincia"/> Por provincias</label>
             <label><input type="checkbox" name="inf-mapa" value="localidad"/> Por localidades</label>
@@ -137,7 +137,8 @@ export function abrirInformesUI(ctx) {
         );
         let mapas = [];
         if (Object.values(niveles).some(Boolean)) {
-          mapas = await generarMapas(lista, niveles, agruparPorNivel, (h, t) => aviso(`Generando mapas de localización (${h}/${t})…`));
+          mapas = await generarMapas(lista, niveles, agruparPorNivel, (h, t) => aviso(`Generando mapas de localización (${h}/${t})…`),
+            lista === ctx.todos ? 'Todos los nidos' : tituloMapaGeneral(ctx.geo));
         }
         cuerpo = construirInforme(lista, {
           ...opciones,

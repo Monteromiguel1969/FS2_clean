@@ -529,7 +529,7 @@ function pintarMapa(lista) {
   const huella = puntos.length ? `${puntos.length}|${lista.map((n) => n.id).join(',')}` : '';
   if (puntos.length && huella !== estado.huellaMapa) {
     estado.huellaMapa = huella;
-    estado.mapa.fitBounds(puntos, { padding: [30, 30], maxZoom: 12 });
+    estado.mapa.fitBounds(puntos, { padding: [30, 30], maxZoom: puntos.length === 1 ? 14 : 13 });
   }
   setTimeout(() => estado.mapa?.invalidateSize(), 50);
 }
@@ -721,6 +721,7 @@ function abrirInformes(op = {}) {
     seleccion: visibles(),
     todos: estado.nidos,
     filtros: describirFiltros(),
+    geo: estado.filtro,
     email: estado.sesion?.user?.email ?? '',
     nido: op.nido ?? null,
   });
