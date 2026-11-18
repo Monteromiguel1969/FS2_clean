@@ -143,3 +143,35 @@ test('lee un .xlsx real (con fechas, números y columnas que faltan) y lo planif
   assert.equal(b.coordenada_x, null);
   assert.deepEqual(plan.cabeceras.ignoradas, ['Notas']);
 });
+
+test('Campaña y Proyecto se reconocen con tilde, mayúsculas, espacios, BOM e invisibles en cualquier columna', () => {
+  const variantes = ['Campaña', 'campaña', 'CAMPAÑA', ' Campaña ', '\ufeffCampaña', '\ufeff\ufeffCAMPAÑA ', 'Campan\u0303a', 'Campa\u00a0ña', 'Campaña\u200b', 'Campaña:', 'Campana', 'Campañas', 'Año campaña', 'CampaÃ±a'];
+  for (const h of variantes) {
+    const delante = mapearCabeceras([h, 'Numeración']);
+    assert.equal(delante.indices.campana, 0, JSON.stringify(h));
+    assert.equal(delante.indices.numeracion, 1);
+    assert.deepEqual(delante.ignoradas, [], JSON.stringify(h));
+    assert.equal(mapearCabeceras(['Numeración', h]).indices.campana, 1, JSON.stringify(h));
+  }
+  for (const h of ['Proyecto', 'PROYECTO', ' proyecto ', '\ufeffProyecto', 'Proyecto\u00a0', 'Proyectos']) {
+    assert.equal(mapearCabeceras([h, 'Numeración']).indices.proyecto, 0, JSON.stringify(h));
+  }
+});
+
+test('un nombre exacto gana al aproximado y una cabecera dudosa no roba un campo ya usado', () => {
+  const m = mapearCabeceras(['Campañas', 'Campaña']);
+  assert.equal(m.indices.campana, 1);
+  assert.deepEqual(m.ignoradas, ['Campañas']);
+  assert.deepEqual(mapearCabeceras(['Muncipio']).reconocidas.map((r) => r.key), ['municipio']);
+});
+
+test('importar un .xlsx con «Campaña» en la primera columna asigna la campaña', async () => {
+  for (const h0 of ['Campaña', '\ufeffCampaña', 'CAMPAÑA ']) {
+    const blob = await writeExcelFile([[h0, 'Proyecto', 'Numeración'], [2023, 'Aguilucho', '1'], ['2024', 'Aguilucho', '2']]).toBlob();
+    const plan = await planificarImportacion(await leerHoja(blob), []);
+    assert.equal(plan.trae.campana, true, JSON.stringify(h0));
+    assert.equal(plan.trae.proyecto, true);
+    assert.deepEqual(plan.nuevos.map((n) => n.fila.campana), ['2023', '2024']);
+    assert.deepEqual(plan.cabeceras.ignoradas, []);
+  }
+});

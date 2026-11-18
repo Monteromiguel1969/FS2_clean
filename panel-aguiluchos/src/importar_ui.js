@@ -6,6 +6,9 @@ const esc = (v) =>
 
 const MAX_AVISOS = 30;
 
+// Hace visibles los caracteres invisibles de una cabecera (BOM, NBSP…) para poder diagnosticar.
+const visible = (t) => [...String(t)].map((c) => (/[\u0000-\u001f\u007f-\u009f\u00a0\u200b-\u200f\u2028\u2029\ufeff]/.test(c) ? `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}` : c)).join('');
+
 const lista = (items) => (items.length ? `<ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '');
 
 function vistaPrevia(plan, archivo, { tieneCampana }) {
@@ -25,8 +28,8 @@ function vistaPrevia(plan, archivo, { tieneCampana }) {
     <p class="info">Solo se rellenan celdas con valor. Las celdas vacías o las columnas que faltan dejan el campo como está (en blanco si es nuevo). <b>No se borra ningún nido</b> que no venga en el fichero.</p>
     <ul>${notas.map((n) => `<li>${n}</li>`).join('')}</ul>
     ${plan.resultadosDerivados ? `<p class="info">${plan.resultadosDerivados} filas sin «Resultado reproductivo»: se ha deducido del «Estado final».</p>` : ''}
-    <details><summary>Columnas reconocidas (${c.reconocidas.length})</summary>${lista(c.reconocidas.map((r) => `${r.cabecera} → ${r.key}`))}</details>
-    <details><summary>Columnas del fichero ignoradas (${c.ignoradas.length})</summary>${lista(c.ignoradas)}</details>
+    <details><summary>Columnas reconocidas (${c.reconocidas.length})</summary>${lista(c.reconocidas.map((r) => `${visible(r.cabecera)} → ${r.key}`))}</details>
+    <details><summary>Columnas del fichero ignoradas (${c.ignoradas.length})</summary>${lista(c.ignoradas.map(visible))}</details>
     <details><summary>Campos del formulario que el fichero no trae (${c.sinColumna.length})</summary>${lista(c.sinColumna)}</details>
     ${avisos.length ? `<div class="aviso"><b>Avisos (${plan.avisos.length})</b>${lista(avisos)}${plan.avisos.length > MAX_AVISOS ? `<div class="info">… y ${plan.avisos.length - MAX_AVISOS} más.</div>` : ''}</div>` : ''}`;
 }
@@ -54,7 +57,7 @@ export async function abrirImportarUI({ dlg, archivo, nidos, columnas, tieneCamp
     return;
   }
   if (plan.error) {
-    marco(`<div class="aviso error">${esc(plan.error)}</div>${lista(plan.cabeceras.ignoradas.map((t) => `Cabecera no reconocida: ${t}`))}`);
+    marco(`<div class="aviso error">${esc(plan.error)}</div>${lista(plan.cabeceras.ignoradas.map((t) => `Cabecera no reconocida: ${visible(t)}`))}`);
     return;
   }
   const hayTrabajo = plan.nuevos.length + plan.actualizar.length > 0;

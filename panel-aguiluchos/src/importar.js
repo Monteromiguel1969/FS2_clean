@@ -5,8 +5,23 @@
 import { COLUMNAS, MANEJO } from './columns.js';
 import { esPlausible } from './utm.js';
 
+// Texto con «CampaÃ±a» (UTF-8 leído como Latin-1) → «Campaña».
+function repararMojibake(t) {
+  if (!/[ÃÂ][\u0080-\u00bf]/.test(t)) return t;
+  const cods = [...t].map((c) => c.charCodeAt(0));
+  if (cods.some((c) => c > 255)) return t;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(cods));
+  } catch {
+    return t;
+  }
+}
+
+/** Quita BOM, espacios de ancho cero y otros caracteres invisibles; NBSP pasa a espacio. */
+export const limpiar = (s) => repararMojibake(String(s ?? '').replace(/\p{Cf}/gu, '').replace(/[\u00a0\u2007\u202f]/g, ' '));
+
 export const normalizar = (s) =>
-  String(s ?? '')
+  limpiar(s)
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
@@ -42,10 +57,30 @@ function tablaNombres(columnas) {
   return mapa;
 }
 
+function distancia1(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  const [corta, larga] = a.length < b.length ? [a, b] : [b, a];
+  return corta.slice(i) === larga.slice(i + 1);
+}
+
+// Segunda pasada, solo para cabeceras que no coinciden exactamente y solo si el
+// campo sigue libre: «Campañas», «Año campaña», «Proyecto:», erratas de una letra…
+function emparejarAproximado(n, nombres, libre) {
+  const contiene = [['campan', 'campana'], ['proyecto', 'proyecto']].find(([t, k]) => n.includes(t) && libre(k));
+  if (contiene) return contiene[1];
+  if (n.length < 6) return null;
+  const cercanos = new Set();
+  for (const [nombre, key] of nombres) if (nombre.length >= 6 && libre(key) && distancia1(n, nombre)) cercanos.add(key);
+  return cercanos.size === 1 ? [...cercanos][0] : null;
+}
+
 /**
  * Empareja la primera fila con las columnas del formulario.
- * Devuelve índices por campo, las cabeceras reconocidas, las ignoradas (columnas de
- * más o repetidas) y los campos del formulario que el fichero no trae.
+ * Devuelve índices por campo, las cabeceras reconocidas, las ignoradas (columnas de más o
+ * repetidas) y los campos del formulario que el fichero no trae.
  */
 export function mapearCabeceras(fila, columnas = COLUMNAS) {
   const nombres = tablaNombres(columnas);
@@ -53,16 +88,22 @@ export function mapearCabeceras(fila, columnas = COLUMNAS) {
   const indices = {};
   const reconocidas = [];
   const ignoradas = [];
+  const pendientes = [];
   (fila ?? []).forEach((cab, i) => {
-    const texto = String(cab ?? '').trim();
+    const texto = limpiar(cab).trim();
     if (!texto) return;
     const n = normalizar(texto);
-    let key = nombres.get(n);
-    if (!key) key = PREFIJOS.find(([p, k]) => n.startsWith(p) && disponibles.has(k))?.[1];
-    if (!key || key in indices) { ignoradas.push(texto); return; }
+    const key = nombres.get(n) ?? PREFIJOS.find(([p, k]) => n.startsWith(p) && disponibles.has(k))?.[1];
+    if (!key) { pendientes.push({ i, texto, n }); return; }
+    if (key in indices) { ignoradas.push(texto); return; }
     indices[key] = i;
     reconocidas.push({ cabecera: texto, key });
   });
+  const libre = (k) => disponibles.has(k) && !(k in indices);
+  for (const { i, texto, n } of pendientes) {
+    const key = emparejarAproximado(n, nombres, libre);
+    if (key) { indices[key] = i; reconocidas.push({ cabecera: texto, key }); } else ignoradas.push(texto);
+  }
   const sinColumna = columnas.filter((c) => !(c.key in indices)).map((c) => c.label);
   return { indices, reconocidas, ignoradas, sinColumna };
 }
