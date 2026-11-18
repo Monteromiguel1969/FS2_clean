@@ -12,6 +12,7 @@ create table if not exists public.nidos_grefa (
   numeracion            text,
   etiqueta              text,
   proyecto              text,
+  campana               text,
   propietario           text,
   tlfn                  text,
   google_maps_url       text,

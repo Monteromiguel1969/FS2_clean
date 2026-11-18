@@ -65,7 +65,19 @@ export async function cargarNidos() {
   return todos;
 }
 
-const soloColumnas = (n) => Object.fromEntries(COLUMNAS.map((c) => [c.key, n[c.key] ?? (c.tipo === 'list' ? [] : null)]));
+// `campana` se añade a la tabla con supabase/migracion_campana.sql. Mientras no
+// exista, el panel funciona sin ella (no la lee, no la escribe, no la ofrece).
+let hayCampana = true;
+export const tieneCampana = () => hayCampana;
+export const columnasActivas = () => (hayCampana ? COLUMNAS : COLUMNAS.filter((c) => c.key !== 'campana'));
+
+export async function detectarCampana() {
+  const { error } = await supabase.from(TABLA).select('campana').limit(1);
+  hayCampana = !error;
+  return hayCampana;
+}
+
+const soloColumnas = (n) => Object.fromEntries(columnasActivas().map((c) => [c.key, n[c.key] ?? (c.tipo === 'list' ? [] : null)]));
 
 /**
  * Crea o actualiza un nido. `updated_at` es la hora de edición del cliente: el
@@ -104,4 +116,55 @@ export async function borrarNido(id) {
     .update({ is_deleted: true, updated_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw error;
+}
+
+const UUID_DUPLICADO = '23505';
+const LOTE_INSERT = 50;
+const LOTE_UPDATE = 10;
+
+/**
+ * Aplica un plan de importación (ver `planificarImportacion`): inserta los nidos
+ * nuevos y actualiza solo los campos con valor de los existentes. Nunca borra.
+ * Devuelve { creados, actualizados, errores: [texto] }.
+ */
+export async function aplicarImportacion(plan, alProgreso = () => {}) {
+  const ahora = new Date().toISOString();
+  const res = { creados: 0, actualizados: 0, errores: [] };
+  const total = plan.nuevos.length + plan.actualizar.length;
+  let hecho = 0;
+  const avanzar = (n) => { hecho += n; alProgreso(hecho, total); };
+
+  const filaCompleta = (n) => ({ ...n.fila, id: n.id, updated_at: ahora, is_deleted: false });
+  for (let i = 0; i < plan.nuevos.length; i += LOTE_INSERT) {
+    const lote = plan.nuevos.slice(i, i + LOTE_INSERT);
+    const { error } = await supabase.from(TABLA).insert(lote.map(filaCompleta));
+    if (!error) {
+      res.creados += lote.length;
+    } else {
+      // Un id ya usado por un nido borrado: se recupera con los datos del fichero.
+      for (const n of lote) {
+        const q = error.code === UUID_DUPLICADO
+          ? supabase.from(TABLA).upsert(filaCompleta(n), { onConflict: 'id' })
+          : supabase.from(TABLA).insert(filaCompleta(n));
+        const { error: e2 } = await q;
+        if (e2) res.errores.push(`Fila ${n.filaExcel}: ${e2.message}`);
+        else res.creados += 1;
+      }
+    }
+    avanzar(lote.length);
+  }
+
+  for (let i = 0; i < plan.actualizar.length; i += LOTE_UPDATE) {
+    const lote = plan.actualizar.slice(i, i + LOTE_UPDATE);
+    await Promise.all(lote.map(async (u) => {
+      const { error } = await supabase
+        .from(TABLA)
+        .update({ ...u.cambios, updated_at: ahora })
+        .eq('id', u.id);
+      if (error) res.errores.push(`Fila ${u.filaExcel}: ${error.message}`);
+      else res.actualizados += 1;
+    }));
+    avanzar(lote.length);
+  }
+  return res;
 }

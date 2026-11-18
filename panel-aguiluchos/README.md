@@ -4,8 +4,8 @@ Panel para oficina (Vercel + Supabase) que comparte la tabla `nidos_grefa` con l
 `aguiluchos/`. Vite + JavaScript, sin framework; Leaflet para el mapa.
 
 **Funciones:** KPIs (nidos, éxito/fracaso/en curso, tasa de éxito, nacidos/volados/muertos), causas de
-fracaso, filtros (texto, municipio, especie, proyecto, estado), tabla ordenable, mapa (UTM → WGS84),
-ficha completa de 42 campos en 4 fases (crear, editar, eliminar), exportación CSV (Excel es_ES) y login
+fracaso, filtros (texto, ubicación, especie, proyecto, campaña, estado), tabla ordenable, mapa (UTM → WGS84),
+ficha completa de 43 campos en 4 fases (crear, editar, eliminar), exportación CSV eligiendo los campos por fase (Excel es_ES), importación tolerante de Excel (.xlsx) y login
 con Supabase Auth.
 
 ## Puesta en marcha local
@@ -52,6 +52,16 @@ disponible, el panel lo indica y relee los datos cada 90 s.
 
 * No sube ni muestra fotos (`imagenes_urls`) todavía.
 * Exportación solo CSV; para PDF/Excel con formato usa la app.
+
+## Proyecto, campaña e importación de Excel
+
+* **Proyecto** (línea de trabajo) y **campaña** (tanda dentro del proyecto) son campos distintos, con selectores propios.
+  La campaña requiere ejecutar una vez `aguiluchos/supabase/migracion_campana.sql` en el SQL Editor de Supabase;
+  hasta entonces el panel funciona sin ese campo.
+* **Importar Excel (.xlsx)**: la primera fila son las cabeceras; se emparejan por nombre (etiqueta del formulario o nombre
+  de campo, sin importar acentos ni paréntesis). Columna o celda que falta = campo en blanco; columnas de más se ignoran;
+  nunca se borra ningún nido; proyecto y campaña solo se asignan si el fichero trae esas columnas. Se enseña una vista
+  previa antes de aplicar. Un nido ya existente (misma numeración o etiqueta, y proyecto/campaña compatibles) solo se completa.
 
 ## Contratos, parcelas y propietarios
 

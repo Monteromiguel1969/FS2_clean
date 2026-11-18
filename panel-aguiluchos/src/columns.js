@@ -1,7 +1,7 @@
-// Las 42 columnas de `nidos_grefa` en 4 fases (idéntico al modelo de la app).
+// Las 43 columnas de `nidos_grefa` en 4 fases (las 42 de la app + `campana`).
+// Proyecto (línea de trabajo) y campaña (tanda dentro del proyecto) son campos distintos.
 // tipo: text | int | date | bool | list | num | area | select (con opciones)
 export const ESPECIES = ['Aguilucho cenizo', 'Aguilucho pálido', 'Aguilucho lagunero'];
-export const PROYECTOS = ['LIFE', 'Compensatorias', 'USANOS'];
 export const TERRITORIOS = ['Seguro', 'Probable', 'Posible', 'Descartado'];
 export const SUSTRATOS = ['Cebada', 'Trigo', 'Avena', 'Erial', 'Barbecho', 'Pastizal', 'Herbazal', 'Matorral', 'Otro'];
 export const MANEJO = ['Dron', 'Rodal', 'Compensación'];
@@ -30,7 +30,8 @@ const c = (fase, key, label, tipo = 'text', opciones) => ({ fase, key, label, ti
 export const COLUMNAS = [
   c(1, 'numeracion', 'Numeración'),
   c(1, 'etiqueta', 'Etiqueta'),
-  c(1, 'proyecto', 'Proyecto', 'select', PROYECTOS),
+  c(1, 'proyecto', 'Proyecto'),
+  c(1, 'campana', 'Campaña'),
   c(1, 'propietario', 'Propietario'),
   c(1, 'tlfn', 'Teléfono'),
   c(1, 'google_maps_url', 'URL Google Maps'),

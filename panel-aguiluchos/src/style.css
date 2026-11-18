@@ -178,3 +178,11 @@ dialog.dlg-ayuda::backdrop { background: rgba(0,0,0,.45); }
   .dlg-ayuda .ay-cuerpo { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .dlg-ayuda .ay-indice { max-height: 28vh; border-right: 0; border-bottom: 1px solid var(--borde); }
 }
+/* Exportar CSV / Importar Excel */
+.csv-global, .csv-fase { display: flex; gap: 8px; margin-bottom: 8px; }
+.csv-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; }
+.csv-campos label { display: flex; gap: 6px; align-items: center; font-size: 14px; }
+.imp-kpis { margin-top: 10px; }
+#imp-cuerpo details { margin: 6px 0; }
+#imp-cuerpo summary { cursor: pointer; font-weight: 600; }
+#imp-cuerpo ul { margin: 6px 0 6px 18px; padding: 0; }

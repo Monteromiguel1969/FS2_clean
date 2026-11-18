@@ -24,6 +24,30 @@ export function googleMapsUrl(n) {
 
 const norm = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
+/** Valor del selector que representa «sin proyecto» / «sin campaña». */
+export const SIN_VALOR = '__sin__';
+
+const vacio = (v) => v == null || String(v).trim() === '';
+const coincide = (valor, sel) => (sel === SIN_VALOR ? vacio(valor) : String(valor ?? '').trim() === sel);
+
+/** Valores distintos de un campo (ordenados) y si hay nidos sin valor. */
+export function valoresDistintos(nidos, clave) {
+  const set = new Set();
+  let sin = false;
+  for (const n of nidos) {
+    if (vacio(n[clave])) sin = true;
+    else set.add(String(n[clave]).trim());
+  }
+  return { valores: [...set].sort((a, b) => a.localeCompare(b, 'es', { numeric: true })), sin };
+}
+
+/** Opciones de los selectores: la campaña solo ofrece las del proyecto elegido. */
+export function opcionesProyectoCampana(nidos, f) {
+  const proyectos = valoresDistintos(nidos, 'proyecto');
+  const deProyecto = f.proyecto ? nidos.filter((n) => coincide(n.proyecto, f.proyecto)) : nidos;
+  return { proyectos, campanas: valoresDistintos(deProyecto, 'campana') };
+}
+
 export function filtrar(nidos, f) {
   const q = norm(f.texto).trim();
   return nidos.filter((n) => {
@@ -36,7 +60,8 @@ export function filtrar(nidos, f) {
       if (f.localidad && u.localidad !== f.localidad) return false;
     }
     if (f.especie && n.especie !== f.especie) return false;
-    if (f.proyecto && n.proyecto !== f.proyecto) return false;
+    if (f.proyecto && !coincide(n.proyecto, f.proyecto)) return false;
+    if (f.campana && !coincide(n.campana, f.campana)) return false;
     if (f.estado && estadoReproductivo(n) !== f.estado) return false;
     if (q && !norm(`${n.etiqueta} ${n.numeracion} ${n.propietario} ${n.municipio}`).includes(q)) return false;
     return true;

@@ -4,16 +4,19 @@ import './style.css';
 
 import {
   configurado, exigeLogin, supabase, cargarNidos, guardarNido, borrarNido, suscribirCambios,
-  registrar, recuperarClave, cambiarClave,
+  registrar, recuperarClave, cambiarClave, detectarCampana, tieneCampana, columnasActivas, aplicarImportacion,
 } from './api.js';
-import { COLUMNAS, FASES, ESPECIES, PROYECTOS } from './columns.js';
+import { FASES, ESPECIES } from './columns.js';
+import { abrirExportarCsvUI } from './exportar_ui.js';
+import { abrirImportarUI } from './importar_ui.js';
 import { opcionesCascada } from './geo.js';
 import { abrirInformesUI } from './informe_ui.js';
 import { crearControlador, puntoSemaforo } from './contratos_ui.js';
 import { ayudaBtn, iniciarAyuda } from './ayuda.js';
 import { FILTROS_CONTRATO, SEMAFORO, grupoSemaforo } from './contratos_logic.js';
 import {
-  aCsv, aplicarCambio, estadoReproductivo, filtrar, googleMapsUrl, parseValor, posicion, resumen, validar,
+  aplicarCambio, estadoReproductivo, filtrar, googleMapsUrl, parseValor, posicion, resumen, validar,
+  opcionesProyectoCampana, SIN_VALOR,
   correoPermitido, esAdmin, validarClave, DOMINIO, MIN_CLAVE,
 } from './logic.js';
 
@@ -23,7 +26,7 @@ const estado = {
   nidos: [],
   cargando: false,
   error: null,
-  filtro: { texto: '', pais: '', comunidad: '', provincia: '', localidad: '', especie: '', proyecto: '', estado: '', contrato: '' },
+  filtro: { texto: '', pais: '', comunidad: '', provincia: '', localidad: '', especie: '', proyecto: '', campana: '', estado: '', contrato: '' },
   contratos: null,
   colorMapa: 'resultado',
   orden: { clave: 'numeracion', asc: true },
@@ -219,6 +222,7 @@ async function recargar() {
   actualizarCabecera();
   const cargaContratos = estado.contratos?.cargar();
   try {
+    await detectarCampana();
     estado.nidos = await cargarNidos();
   } catch (e) {
     estado.error = `No se pudieron cargar los datos: ${e.message ?? e}`;
@@ -270,7 +274,9 @@ function pintarPanel() {
       <span class="en-vivo espera" id="en-vivo"></span>
       <button class="btn" id="btn-recargar" title="Volver a leer los datos">Actualizar</button>
       <button class="btn" id="btn-mapa" title="Ver todos los nidos en el mapa; al pinchar uno se abre su tarjeta">Mapa de nidos</button>
-      <button class="btn" id="btn-csv">Exportar CSV</button>
+      <button class="btn" id="btn-csv" title="Elegir los campos y descargar los nidos de la selección">Exportar CSV</button>
+      <button class="btn" id="btn-importar" title="Importar nidos desde un Excel (.xlsx): cabeceras en la primera fila">Importar Excel</button>
+      <input type="file" id="archivo-excel" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
       <button class="btn" id="btn-informes" title="Emitir informes técnicos editables (PDF / Word)">Informes</button>
       <button class="btn" id="btn-contratos" title="Parcelas, propietarios y convenios firmados">Contratos</button>
       <button class="btn primario" id="btn-nuevo">+ Nuevo nido</button>
@@ -296,6 +302,13 @@ function pintarPanel() {
 
   document.getElementById('btn-recargar').onclick = recargar;
   document.getElementById('btn-csv').onclick = exportarCsv;
+  const selector = document.getElementById('archivo-excel');
+  document.getElementById('btn-importar').onclick = () => selector.click();
+  selector.onchange = () => {
+    const archivo = selector.files[0];
+    selector.value = '';
+    if (archivo) importarExcel(archivo);
+  };
   document.getElementById('btn-informes').onclick = () => abrirInformes();
   document.getElementById('btn-contratos').onclick = () => estado.contratos.abrir();
   document.getElementById('btn-mapa').onclick = () => {
@@ -363,7 +376,7 @@ function pintarContenido() {
   else pintarTabla(lista);
 }
 
-const FILTRO_VACIO = { texto: '', pais: '', comunidad: '', provincia: '', localidad: '', especie: '', proyecto: '', estado: '', contrato: '' };
+const FILTRO_VACIO = { texto: '', pais: '', comunidad: '', provincia: '', localidad: '', especie: '', proyecto: '', campana: '', estado: '', contrato: '' };
 
 function pintarFiltros(todos) {
   const el = document.getElementById('filtros');
@@ -375,6 +388,10 @@ function pintarFiltros(todos) {
   if (f.provincia && !cas.provincias.includes(f.provincia)) f.provincia = '';
   if (f.localidad && !cas.localidades.includes(f.localidad)) f.localidad = '';
   const opts = (vals, sel, todosTxt) => `<option value="">${todosTxt}</option>${vals.map((v) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(v)}</option>`).join('')}`;
+  const pc = opcionesProyectoCampana(todos, f);
+  if (f.campana && f.campana !== SIN_VALOR && !pc.campanas.valores.includes(f.campana)) f.campana = '';
+  const optsSin = ({ valores, sin }, sel, todosTxt, sinTxt) =>
+    opts(valores, sel, todosTxt) + (sin ? `<option value="${SIN_VALOR}" ${sel === SIN_VALOR ? 'selected' : ''}>${sinTxt}</option>` : '');
   el.innerHTML = `
     <input type="search" id="f-texto" placeholder="Buscar etiqueta, propietario, localidad…" value="${esc(f.texto)}" />
     <select id="f-pais" title="País">${opts(cas.paises, f.pais, 'País: todos')}</select>
@@ -382,7 +399,8 @@ function pintarFiltros(todos) {
     <select id="f-provincia" title="Provincia">${opts(cas.provincias, f.provincia, 'Provincia: todas')}</select>
     <select id="f-localidad" title="Localidad">${opts(cas.localidades, f.localidad, 'Localidad: todas')}</select>
     <select id="f-especie" title="Especie">${opts(ESPECIES, f.especie, 'Especie: todas')}</select>
-    <select id="f-proyecto" title="Proyecto">${opts(PROYECTOS, f.proyecto, 'Proyecto: todos')}</select>
+    <select id="f-proyecto" title="Proyecto (línea de trabajo)">${optsSin(pc.proyectos, f.proyecto, 'Proyecto: todos', 'Sin proyecto')}</select>
+    ${tieneCampana() ? `<select id="f-campana" title="Campaña (tanda dentro del proyecto)">${optsSin(pc.campanas, f.campana, 'Campaña: todas', 'Sin campaña')}</select>` : ''}
     <select id="f-estado" title="Estado reproductivo">${opts(['Éxito', 'Fracaso', 'En curso'], f.estado, 'Estado: todos')}</select>
     ${contratosActivos() ? `<select id="f-contrato" title="Contrato de la parcela (campaña del nido)"><option value="">Contrato: todos</option>${Object.entries(FILTROS_CONTRATO).map(([k, l]) => `<option value="${k}" ${k === f.contrato ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>` : ''}
     <button class="btn" id="f-limpiar">Limpiar</button>${ayudaBtn('filtros')}`;
@@ -392,6 +410,10 @@ function pintarFiltros(todos) {
   const enlazar = (id, clave, evento = 'change') =>
     (document.getElementById(id).addEventListener(evento, (ev) => {
       estado.filtro[clave] = ev.target.value;
+      if (clave === 'proyecto') {
+        estado.filtro.campana = '';
+        el.dataset.listo = '';
+      }
       const i = NIVELES.indexOf(clave);
       if (i >= 0) {
         for (const inferior of NIVELES.slice(i + 1)) estado.filtro[inferior] = '';
@@ -403,6 +425,7 @@ function pintarFiltros(todos) {
   for (const n of NIVELES) enlazar(`f-${n}`, n);
   enlazar('f-especie', 'especie');
   enlazar('f-proyecto', 'proyecto');
+  if (document.getElementById('f-campana')) enlazar('f-campana', 'campana');
   enlazar('f-estado', 'estado');
   if (document.getElementById('f-contrato')) enlazar('f-contrato', 'contrato');
   document.getElementById('f-limpiar').onclick = () => {
@@ -549,7 +572,7 @@ function campoHtml(c, valor) {
 
 function leerFormulario(base) {
   const n = { ...base };
-  for (const c of COLUMNAS) {
+  for (const c of columnasActivas()) {
     if (c.tipo === 'list') {
       n[c.key] = [...document.querySelectorAll(`input[name="${c.key}"]:checked`)].map((i) => i.value);
     } else {
@@ -587,7 +610,7 @@ function abrirFicha(nido) {
     ${esNuevo ? '' : '<div class="bloque-contrato" id="bloque-contrato" hidden></div>'}
     <div class="dlg-cuerpo" id="dlg-cuerpo">
       ${FASES.map((f) => `<fieldset data-fase="${f.id}"><legend>${f.titulo}</legend><div class="campos">
-        ${COLUMNAS.filter((c) => c.fase === f.id).map((c) => campoHtml(c, base[c.key])).join('')}</div>
+        ${columnasActivas().filter((c) => c.fase === f.id).map((c) => campoHtml(c, base[c.key])).join('')}</div>
         ${f.id === 1 && p ? `<div class="info">Posición WGS84: ${p.lat.toFixed(6)}, ${p.lon.toFixed(6)} · <a target="_blank" rel="noopener" href="${esc(googleMapsUrl(base))}">Abrir en Google Maps</a></div>` : ''}
         ${f.id === 2 ? '<div class="info" id="eclosion-est"></div>' : ''}
         ${f.id === 4 ? '<div class="info" id="balance"></div>' : ''}
@@ -685,7 +708,8 @@ function describirFiltros() {
     f.provincia && `provincia: ${f.provincia}`,
     f.localidad && `localidad: ${f.localidad}`,
     f.especie && `especie: ${f.especie}`,
-    f.proyecto && `proyecto: ${f.proyecto}`,
+    f.proyecto && `proyecto: ${f.proyecto === SIN_VALOR ? 'sin proyecto' : f.proyecto}`,
+    f.campana && `campaña: ${f.campana === SIN_VALOR ? 'sin campaña' : f.campana}`,
     f.estado && `estado: ${f.estado}`,
     f.contrato && `contrato: ${FILTROS_CONTRATO[f.contrato]}`,
   ].filter(Boolean).join('; ');
@@ -704,13 +728,24 @@ function abrirInformes(op = {}) {
 
 // ── Exportación ─────────────────────────────────────────────────────────────
 function exportarCsv() {
-  const lista = visibles();
-  const blob = new Blob([aCsv(lista)], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `nidos_aguiluchos_${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  abrirExportarCsvUI({
+    dlg: document.getElementById('dlg'),
+    lista: visibles(),
+    columnas: columnasActivas(),
+    filtros: describirFiltros(),
+  });
+}
+
+function importarExcel(archivo) {
+  abrirImportarUI({
+    dlg: document.getElementById('dlg'),
+    archivo,
+    nidos: estado.nidos,
+    columnas: columnasActivas(),
+    tieneCampana: tieneCampana(),
+    aplicar: aplicarImportacion,
+    alTerminar: recargar,
+  });
 }
 
 iniciarAyuda();

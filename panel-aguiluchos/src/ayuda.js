@@ -185,14 +185,31 @@ export const MANUAL = [
 <p>La causa se anota en la ficha del nido, en la fase 4 (<i>Causas de fracaso</i>). Si no hay fracasos en la selección, el panel lo indica.</p>`,
   },
   {
+    id: 'importar', grupo: 'nidos', titulo: 'Importar Excel (.xlsx)',
+    html: `
+<ol>
+  <li>Pulsa <b>Importar Excel</b> y elige un fichero <code>.xlsx</code>. La <b>primera fila</b> debe tener los nombres de los campos (como en la ficha, o el nombre técnico).</li>
+  <li>Revisa la vista previa: nidos nuevos, nidos que se completan, columnas reconocidas, ignoradas y avisos.</li>
+  <li>Pulsa <b>Importar</b>.</li>
+</ol>
+<ul>
+  <li>Si falta una columna o una celda está vacía, ese campo queda en blanco (o como estaba).</li>
+  <li>Las columnas de más se ignoran. <b>Nunca se borra</b> ningún nido que no venga en el fichero.</li>
+  <li><b>Proyecto</b> y <b>Campaña</b> solo se asignan si el fichero trae esas columnas; si no, se dejan en blanco. Son campos distintos.</li>
+  <li>Un nido que ya existe (misma numeración o etiqueta, con proyecto y campaña compatibles) solo se completa con las celdas que traen valor.</li>
+  <li>La campaña necesita haber ejecutado <code>migracion_campana.sql</code> en Supabase.</li>
+</ul>`,
+  },
+  {
     id: 'csv', grupo: 'nidos', titulo: 'Exportar a CSV (Excel)',
     html: `
 <ol>
   <li>Aplica los filtros que quieras (se exporta solo lo que ves en la selección).</li>
-  <li>Pulsa <b>Exportar CSV</b>. Se descarga <code>nidos_aguiluchos_AAAA-MM-DD.csv</code>.</li>
+  <li>Pulsa <b>Exportar CSV</b>. Se abre una lista con los campos agrupados por las 4 fases (todos marcados por defecto): quita los que no quieras, o usa «Quitar fase» / «Quitar todos».</li>
+  <li>Pulsa <b>Descargar CSV</b>. Se descarga <code>nidos_aguiluchos_AAAA-MM-DD.csv</code> solo con los campos marcados.</li>
   <li>Ábrelo con Excel: usa «;» como separador y codificación UTF-8, por lo que se ve bien en español.</li>
 </ol>
-<p>Incluye las 42 columnas del nido (todas las fases). Las listas se separan con «;» y las casillas se exportan como Sí/No.</p>
+<p>Si dejas todo marcado incluye las 43 columnas del nido (todas las fases). Las listas se separan con «;» y las casillas se exportan como Sí/No.</p>
 <p>La compensación económica tiene su propio CSV en ${enl('compensacion', 'Contratos → Compensación')}.</p>`,
   },
 

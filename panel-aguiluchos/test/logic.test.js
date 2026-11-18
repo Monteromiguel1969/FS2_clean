@@ -18,9 +18,9 @@ test('UTM coincide con pyproj (mismos valores que la app Flutter)', () => {
   assert.equal(esPlausible(604768, 466791), false);
 });
 
-test('42 columnas en 4 fases (14/5/9/14)', () => {
-  assert.equal(COLUMNAS.length, 42);
-  assert.deepEqual(FASES.map((f) => COLUMNAS.filter((c) => c.fase === f.id).length), [14, 5, 9, 14]);
+test('43 columnas en 4 fases (15/5/9/14)', () => {
+  assert.equal(COLUMNAS.length, 43);
+  assert.deepEqual(FASES.map((f) => COLUMNAS.filter((c) => c.fase === f.id).length), [15, 5, 9, 14]);
 });
 
 test('estado reproductivo, filtros y resumen', () => {
@@ -91,4 +91,31 @@ test('cuentas: solo @grefa.org, un único administrador y clave mínima', () => 
   assert.equal(esAdmin(undefined), false);
   assert.equal(validarClave('corta'), 'La contraseña debe tener al menos 8 caracteres.');
   assert.equal(validarClave('suficiente1'), null);
+});
+
+test('filtros de proyecto y campaña son independientes y admiten «sin valor»', async () => {
+  const { filtrar, opcionesProyectoCampana, SIN_VALOR } = await import('../src/logic.js');
+  const nidos = [
+    { id: 1, proyecto: 'Aguilucho', campana: '2026' },
+    { id: 2, proyecto: 'Aguilucho', campana: '2027' },
+    { id: 3, proyecto: 'Otro', campana: '2026' },
+    { id: 4, proyecto: null, campana: null },
+  ];
+  const ids = (f) => filtrar(nidos, f).map((n) => n.id);
+  assert.deepEqual(ids({ proyecto: 'Aguilucho' }), [1, 2]);
+  assert.deepEqual(ids({ campana: '2026' }), [1, 3]);
+  assert.deepEqual(ids({ proyecto: 'Aguilucho', campana: '2027' }), [2]);
+  assert.deepEqual(ids({ proyecto: SIN_VALOR }), [4]);
+  assert.deepEqual(ids({ campana: SIN_VALOR }), [4]);
+  const o = opcionesProyectoCampana(nidos, { proyecto: 'Aguilucho' });
+  assert.deepEqual(o.proyectos.valores, ['Aguilucho', 'Otro']);
+  assert.equal(o.proyectos.sin, true);
+  assert.deepEqual(o.campanas.valores, ['2026', '2027']);
+  assert.equal(o.campanas.sin, false);
+});
+
+test('CSV con campos elegidos: solo esas columnas, en el orden de la tabla', () => {
+  const cols = COLUMNAS.filter((c) => ['campana', 'numeracion', 'proyecto'].includes(c.key));
+  const csv = aCsv([{ numeracion: '1', proyecto: 'A', campana: '2026' }], cols);
+  assert.equal(csv, '\ufeffNumeración;Proyecto;Campaña\r\n1;A;2026');
 });
