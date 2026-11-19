@@ -119,7 +119,7 @@ export const MANUAL = [
   <tr><td><b>● En vivo</b></td><td>Conexión en tiempo real: los cambios de la app de campo aparecen al instante. «○ Conectando…» es transitorio. «○ Sin tiempo real» significa que el panel se actualiza solo cada 90 segundos.</td></tr>
   <tr><td><b>Actualizar</b></td><td>Vuelve a leer todos los datos ahora mismo.</td></tr>
   <tr><td><b>Mapa de nidos</b></td><td>Salta a la vista de mapa con los nidos filtrados. Ver ${enl('mapa', 'mapa')}.</td></tr>
-  <tr><td><b>Presentación</b></td><td>Descarga el cuaderno de Colab que crea el PowerPoint con los nidos filtrados. Ver ${enl('presentacion', 'Presentación')}.</td></tr>
+  <tr><td><b>Presentación</b></td><td>Descarga un PowerPoint (.pptx) con los nidos filtrados. Ver ${enl('presentacion', 'Presentación')}.</td></tr>
   <tr><td><b>Exportar CSV</b></td><td>Descarga los nidos filtrados. Ver ${enl('csv', 'exportar CSV')}.</td></tr>
   <tr><td><b>Informes</b></td><td>Emite informes técnicos editables. Ver ${enl('informes', 'informes')}.</td></tr>
   <tr><td><b>Contratos</b></td><td>Abre parcelas, propietarios, convenios, compensación y ayudas. Ver ${enl('contratos', 'contratos')}.</td></tr>
@@ -202,9 +202,9 @@ export const MANUAL = [
 </ul>`,
   },
   {
-    id: 'presentacion', grupo: 'nidos', titulo: 'Presentación (cuaderno de Colab)',
+    id: 'presentacion', grupo: 'nidos', titulo: 'Presentación PowerPoint',
     html: `
-<p><b>Presentación</b> descarga un cuaderno <code>.ipynb</code> con los nidos filtrados (mismos filtros que el informe) ya incrustados. Súbelo a <a href="https://colab.research.google.com/" target="_blank" rel="noopener">Google Colab</a> (Archivo → Subir cuaderno) y pulsa <b>Entorno de ejecución → Ejecutar todo</b>: se descarga el PowerPoint con portada, totales, gráficos, mapa, imágenes y tabla. Si Colab no puede cargar el mapa o la ortofoto, usa un mapa estático con los puntos.</p>`,
+<p>El botón <b>Presentación</b> (junto a <b>Informes</b>) descarga directamente un <code>.pptx</code> con la selección actual de nidos (mismos filtros que el informe): portada con el ámbito, totales, gráficos, mapa (con el fondo elegido), fotos de los nidos con URL pública y tabla. Las celdas sin dato quedan en blanco y no incluye propietarios ni teléfonos. Abre en PowerPoint y se puede importar a Google Slides desde Drive.</p>`,
   },
   {
     id: 'csv', grupo: 'nidos', titulo: 'Exportar a CSV (Excel)',

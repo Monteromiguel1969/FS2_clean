@@ -1,53 +1,73 @@
-import { construirCuaderno, serializarCuaderno } from './cuaderno.js';
-import { armarDatosCuaderno, nombreCuaderno } from './presentacion.js';
+import { puntosDe, renderMapa } from './mapa_img.js';
+import { MAX_IMAGENES, armarPresentacion } from './presentacion.js';
+import { descargarPptx } from './presentacion_pptx.js';
 
-export const URL_COLAB = 'https://colab.research.google.com/';
+const TIEMPO_FOTO_MS = 6000;
+const LADO_MAX_FOTO = 1600;
 
-const esc = (v) =>
-  String(v ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+/** Descarga una foto pública y la reduce a JPEG; null si no se puede (CORS, 404, no es imagen…). */
+async function cargarFoto(url) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), TIEMPO_FOTO_MS);
+  try {
+    const r = await fetch(url, { signal: ctl.signal, mode: 'cors' });
+    if (!r.ok) return null;
+    const bmp = await createImageBitmap(await r.blob());
+    const k = Math.min(1, LADO_MAX_FOTO / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * k));
+    const h = Math.max(1, Math.round(bmp.height * k));
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    return { dataUrl: c.toDataURL('image/jpeg', 0.85), w, h };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
 
-function descargar(texto, nombre) {
-  const blob = new Blob([texto], { type: 'application/x-ipynb+json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = nombre;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+/** Fotos públicas de los nidos; deja de insistir si las primeras no se pueden descargar. */
+export async function cargarFotos(candidatas, cargar = cargarFoto, maximo = MAX_IMAGENES) {
+  const res = [];
+  let fallos = 0;
+  for (const c of candidatas) {
+    if (res.length >= maximo || (fallos >= 8 && !res.length)) break;
+    const f = await cargar(c.url);
+    if (f) res.push({ ...f, titulo: c.titulo, subtitulo: c.subtitulo });
+    else fallos += 1;
+  }
+  return res;
 }
 
 /**
- * «Presentación»: informe filtrado → cuaderno de Colab → (Ejecutar todo) → .pptx.
- * Descarga el .ipynb con los nidos filtrados incrustados y explica cómo abrirlo en Colab.
+ * Presentación PowerPoint con los nidos filtrados (visibles(), igual que el informe),
+ * generada y descargada en el navegador. `ctx`: { lista, geo, filtros, fondo, aviso(texto) }.
  */
-export function abrirPresentacionUI({ dlg, lista, geo, filtros, fondo }) {
-  if (!lista.length) {
-    dlg.innerHTML = `<form method="dialog"><div class="dlg-cab"><h2>Presentación</h2><button type="button" class="btn" id="pres-cerrar">Cerrar</button></div>
-      <div class="dlg-cuerpo"><div class="aviso">No hay nidos en la selección actual. Cambia los filtros y vuelve a pulsar Presentación.</div></div></form>`;
-    dlg.querySelector('#pres-cerrar').onclick = () => dlg.close();
-    dlg.showModal();
-    return null;
+export async function crearPresentacionUI({ lista, geo, filtros, fondo, aviso }) {
+  if (!lista.length) { aviso('No hay nidos en la selección actual para crear la presentación.'); return; }
+  const datos = armarPresentacion(lista, { geo, filtros, fondo });
+
+  let mapa = null;
+  const puntos = puntosDe(lista);
+  if (puntos.length) {
+    aviso('Preparando el mapa…');
+    try {
+      const ancho = 1200;
+      const alto = 620;
+      const dataUrl = await renderMapa(puntos, { ancho, alto, fondo, etiquetar: puntos.length <= 14 });
+      if (dataUrl) mapa = { dataUrl, w: ancho, h: alto, pie: `${puntos.length} nidos con coordenadas · fondo: ${datos.fondo.nombre} · verde = éxito, rojo = fracaso, naranja = en curso` };
+    } catch {
+      mapa = null;
+    }
   }
-  const datos = armarDatosCuaderno(lista, { geo, filtros, fondo });
-  const texto = serializarCuaderno(construirCuaderno(datos));
-  const nombre = nombreCuaderno();
-  dlg.innerHTML = `<form method="dialog" id="form-pres">
-    <div class="dlg-cab"><h2>Presentación</h2><button type="button" class="btn" id="pres-cerrar">Cerrar</button></div>
-    <div class="dlg-cuerpo">
-      <p class="info">Cuaderno de Colab con los <b>${datos.nidos.length}</b> nidos filtrados · ${esc(datos.ambito)} (mismo filtro que el informe). Se ha descargado <code>${esc(nombre)}</code>.</p>
-      <ol>
-        <li>Abre <a href="${URL_COLAB}" target="_blank" rel="noopener">Google Colab</a> → <b>Archivo → Subir cuaderno</b> y elige <code>${esc(nombre)}</code>.</li>
-        <li>Menú <b>Entorno de ejecución → Ejecutar todo</b>.</li>
-        <li>Al terminar se descarga <code>${esc(datos.nombre_pptx)}</code> con portada, totales, gráficos, mapa, imágenes y tabla.</li>
-      </ol>
-      <p class="info">El cuaderno lleva los datos incrustados (sin propietarios ni teléfonos) y no pide claves ni contraseñas.</p>
-    </div>
-    <div class="dlg-pie"><span class="msg"></span>
-      <button type="button" class="btn" id="pres-otra">Descargar de nuevo</button>
-      <a class="btn primario" href="${URL_COLAB}" target="_blank" rel="noopener" id="pres-colab">Abrir Google Colab</a></div>
-  </form>`;
-  dlg.querySelector('#pres-cerrar').onclick = () => dlg.close();
-  dlg.querySelector('#pres-otra').onclick = () => descargar(texto, nombre);
-  dlg.showModal();
-  descargar(texto, nombre);
-  return { nombre, datos };
+  let imagenes = [];
+  if (datos.imagenes.length) {
+    aviso('Descargando imágenes de los nidos…');
+    imagenes = await cargarFotos(datos.imagenes);
+  }
+  aviso('Creando la presentación…');
+  const nombre = await descargarPptx(datos, { mapa, imagenes });
+  aviso(`Presentación descargada: ${nombre}`);
 }
