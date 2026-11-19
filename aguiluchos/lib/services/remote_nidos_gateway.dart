@@ -45,6 +45,14 @@ class SupabaseNidosGateway implements RemoteNidosGateway {
 
   final SupabaseClient _client;
 
+  /// `true` si Supabase aún no tiene la columna `campana` (falta ejecutar
+  /// `migracion_campana.sql`): se sincroniza igual, sin ese campo.
+  bool _sinColumnaCampana = false;
+
+  static bool _faltaColumnaCampana(PostgrestException e) =>
+      (e.code == 'PGRST204' || e.code == '42703') &&
+      '${e.message} ${e.details ?? ''}'.contains('campana');
+
   @override
   Future<List<RemoteChange>> fetchChanges({
     DateTime? since,
@@ -70,13 +78,24 @@ class SupabaseNidosGateway implements RemoteNidosGateway {
 
   @override
   Future<NidoGrefaModel> upsert(NidoGrefaModel nido) async {
+    Future<Map<String, dynamic>> subir() {
+      final json = nido.toJson();
+      if (_sinColumnaCampana) json.remove('campana');
+      return _client.from(tabla).upsert(json, onConflict: 'id').select().single();
+    }
+
     try {
-      final row = await _client
-          .from(tabla)
-          .upsert(nido.toJson(), onConflict: 'id')
-          .select()
-          .single();
-      return NidoGrefaModel.fromJson(row);
+      Map<String, dynamic> row;
+      try {
+        row = await subir();
+      } on PostgrestException catch (e) {
+        if (_sinColumnaCampana || !_faltaColumnaCampana(e)) rethrow;
+        _sinColumnaCampana = true;
+        row = await subir();
+      }
+      final stored = NidoGrefaModel.fromJson(row);
+      if (stored.remotoSinCampana) stored.campana = nido.campana;
+      return stored;
     } on PostgrestException catch (e) {
       // Códigos PGRST/22xxx/23xxx/42xxx: el servidor entendió y rechazó.
       throw RemoteRejectedException('${e.code}: ${e.message}');

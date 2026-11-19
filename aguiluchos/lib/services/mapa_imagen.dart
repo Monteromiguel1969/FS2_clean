@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show consolidateHttpClientResponseBytes;
 import 'package:image/image.dart' as img;
 
+import '../models/mapa_fondo.dart';
 import '../models/nido_constants.dart';
 import '../models/nido_grefa_model.dart';
 import '../utils/geografia.dart';
@@ -20,6 +21,10 @@ const colorEnCurso = 0xe08a1e;
 
 const leyendaMapa = 'Leyenda: verde = éxito · rojo = fracaso · naranja = en curso. '
     'Mapa base © colaboradores de OpenStreetMap.';
+
+/// Leyenda al pie del mapa según el fondo elegido.
+String leyendaMapaDe(MapaFondo fondo) =>
+    fondo == MapaFondo.osm ? leyendaMapa : fondo.leyenda;
 
 class PuntoMapa {
   const PuntoMapa(this.lat, this.lon, this.color, this.etiqueta);
@@ -36,6 +41,8 @@ class MapaGenerado {
     required this.titulo,
     required this.n,
     required this.bytes,
+    this.ancho = 760,
+    this.alto = 400,
   });
 
   /// 'general' | 'comunidad' | 'provincia' | 'localidad'
@@ -45,6 +52,19 @@ class MapaGenerado {
   /// Nidos representados (con coordenadas).
   final int n;
   final Uint8List bytes;
+
+  /// Dimensiones en píxeles de la imagen.
+  final int ancho;
+  final int alto;
+}
+
+/// Título del mapa general: el nivel geográfico más concreto que se haya filtrado.
+String tituloMapaGeneral({String? pais, String? comunidad, String? provincia, String? localidad}) {
+  if (localidad != null) return 'Localidad: $localidad';
+  if (provincia != null) return 'Provincia: $provincia';
+  if (comunidad != null) return 'Comunidad: $comunidad';
+  if (pais != null && pais != 'España') return 'País: $pais';
+  return 'Todos los nidos';
 }
 
 /// Proyección Web Mercator a píxeles del mundo en el zoom [z] (teselas de 256).
@@ -108,10 +128,10 @@ class DescargadorOsm {
 
   final HttpClient _cliente;
 
-  Future<Uint8List?> call(int z, int x, int y) async {
+  Future<Uint8List?> call(int z, int x, int y, [MapaFondo fondo = MapaFondo.osm]) async {
     try {
       final req = await _cliente
-          .getUrl(Uri.parse('https://tile.openstreetmap.org/$z/$x/$y.png'))
+          .getUrl(Uri.parse(fondo.url(z, x, y)))
           .timeout(const Duration(seconds: 8));
       final resp = await req.close().timeout(const Duration(seconds: 12));
       if (resp.statusCode != 200) {
@@ -136,10 +156,13 @@ String _ascii(String s, [int max = 14]) {
 /// Genera los mapas de un informe.
 class GeneradorMapas {
   /// [descarga] es inyectable (pruebas / sin conexión). Por defecto usa OSM.
-  GeneradorMapas({DescargaTesela? descarga})
+  GeneradorMapas({DescargaTesela? descarga, this.fondo = MapaFondo.osm})
       : _propio = descarga == null ? DescargadorOsm() : null {
-    _descarga = descarga ?? _propio!.call;
+    _descarga = descarga ?? ((z, x, y) => _propio!.call(z, x, y, fondo));
   }
+
+  /// Fondo de los mapas: OpenStreetMap u ortofoto PNOA.
+  final MapaFondo fondo;
 
   final DescargadorOsm? _propio;
   late final DescargaTesela _descarga;
@@ -163,7 +186,7 @@ class GeneradorMapas {
       }
       _aciertos++;
       try {
-        return img.decodePng(bytes);
+        return img.decodeImage(bytes);
       } catch (_) {
         return null;
       }
@@ -232,7 +255,7 @@ class GeneradorMapas {
     }
 
     // Atribución.
-    const atrib = '(c) OpenStreetMap contributors';
+    final atrib = fondo.atribucionAscii;
     if (dibujoTeselas) {
       final w = atrib.length * 7 + 8;
       img.fillRect(lienzo,
@@ -274,7 +297,14 @@ class GeneradorMapas {
             alto: general ? 400 : 330,
             etiquetar: !general && puntos.length <= 14,
           );
-          out.add(MapaGenerado(nivel: nivel, titulo: titulo, n: puntos.length, bytes: bytes));
+          out.add(MapaGenerado(
+            nivel: nivel,
+            titulo: titulo,
+            n: puntos.length,
+            bytes: bytes,
+            ancho: general ? 760 : 560,
+            alto: general ? 400 : 330,
+          ));
         }
         progreso?.call(++hecho, trabajos.length);
         await Future<void>.delayed(Duration.zero); // deja respirar a la interfaz

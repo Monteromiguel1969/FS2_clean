@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../models/mapa_fondo.dart';
 import '../models/nido_constants.dart';
 import '../models/nido_grefa_model.dart';
 import '../utils/geografia.dart';
@@ -184,8 +185,18 @@ String _pct(double? v, [int dec = 0]) =>
 String _num(double? v) =>
     v == null ? 'n/d' : v.toStringAsFixed(2).replaceAll('.', ',');
 
-/// Año de campaña: el de la fecha de incubación más frecuente (o el actual).
+/// Año de campaña: la campaña más frecuente de los nidos (campo «Campaña»);
+/// si ninguno la tiene, el año de la fecha de incubación más frecuente (o el actual).
 String anioCampanaInforme(List<NidoGrefaModel> nidos, [DateTime? hoy]) {
+  final porCampana = <String, int>{};
+  for (final n in nidos) {
+    final k = (n.campana ?? '').trim();
+    if (k.isNotEmpty) porCampana[k] = (porCampana[k] ?? 0) + 1;
+  }
+  if (porCampana.isNotEmpty) {
+    final e = porCampana.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    return e.first.key;
+  }
   final c = <int, int>{};
   for (final n in nidos) {
     final y = n.fechaIncubacion?.year;
@@ -254,6 +265,9 @@ class InformeBorrador {
 
   /// Mapas de localización ya generados (se incrustan tras el resumen).
   List<MapaGenerado> mapas = [];
+
+  /// Fondo con el que se generaron los mapas (para la leyenda y la atribución).
+  MapaFondo fondo = MapaFondo.osm;
 
   /// Borrador del apartado «Objeto y alcance».
   String textoAlcance() {
@@ -409,7 +423,7 @@ class InformeTecnico {
       if (b.mapas.isNotEmpty) {
         bl.add(BTitulo('Mapa de localización', 2));
         bl.add(BMapas(b.mapas, columnas: 1));
-        bl.add(BNota(leyendaMapa));
+        bl.add(BNota(leyendaMapaDe(b.fondo)));
       }
       bl.addAll(_ficha(b.nidos.first, b, nivel: 2));
       bl.add(BTitulo('1. Observaciones y conclusiones', 2));
@@ -517,7 +531,7 @@ class InformeTecnico {
 
   /// Sección «Mapas de localización»: general y, por nivel, un mapa por grupo.
   static List<Bloque> _mapas(InformeBorrador b) {
-    final out = <Bloque>[BNota(leyendaMapa)];
+    final out = <Bloque>[BNota(leyendaMapaDe(b.fondo))];
     final general = b.mapas.where((m) => m.nivel == 'general').toList();
     if (general.isNotEmpty) out.add(BMapas(general, columnas: 1));
     const titulos = {
@@ -612,7 +626,7 @@ class InformeTecnico {
     ];
   }
 
-  /// Ficha técnica de un nido: las 42 columnas agrupadas por fase.
+  /// Ficha técnica de un nido: las 43 columnas agrupadas por fase.
   static List<Bloque> _ficha(NidoGrefaModel n, InformeBorrador b, {required int nivel}) {
     final bl = <Bloque>[
       BTitulo('Ficha técnica · ${n.etiqueta ?? n.numeracion ?? 'Nido'} - ${n.estadoReproductivo.etiqueta}', nivel),

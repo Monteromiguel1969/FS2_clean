@@ -54,13 +54,13 @@ NidoGrefaModel completo() {
 
 void main() {
   group('Metadatos de columnas', () {
-    test('hay 42 columnas con claves únicas', () {
-      expect(nidoColumns.length, 42);
-      expect(nidoColumns.map((c) => c.key).toSet().length, 42);
+    test('hay 43 columnas con claves únicas', () {
+      expect(nidoColumns.length, 43);
+      expect(nidoColumns.map((c) => c.key).toSet().length, 43);
     });
 
-    test('reparto por fases: 14 / 5 / 9 / 14', () {
-      expect(nidoColumnsPorFase[NidoFase.ubicacion]!.length, 14);
+    test('reparto por fases: 15 / 5 / 9 / 14', () {
+      expect(nidoColumnsPorFase[NidoFase.ubicacion]!.length, 15);
       expect(nidoColumnsPorFase[NidoFase.incubacion]!.length, 5);
       expect(nidoColumnsPorFase[NidoFase.seguimiento]!.length, 9);
       expect(nidoColumnsPorFase[NidoFase.cosecha]!.length, 14);
@@ -68,7 +68,7 @@ void main() {
 
     test('las claves coinciden con las columnas de Supabase', () {
       const esperadas = [
-        'numeracion', 'etiqueta', 'proyecto', 'propietario', 'tlfn',
+        'numeracion', 'etiqueta', 'proyecto', 'campana', 'propietario', 'tlfn',
         'google_maps_url', 'municipio', 'provincia', 'referencia_catastral',
         'especie', 'territorio', 'coordenada_x', 'coordenada_y', 'sustrato',
         'fecha_incubacion', 'fecha_eclosion', 'num_huevos_entrada',

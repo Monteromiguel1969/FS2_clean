@@ -8,6 +8,8 @@ class NidoFilter {
     this.comunidad,
     this.provincia,
     this.localidad,
+    this.proyecto,
+    this.campana,
     this.estado = EstadoReproductivo.todos,
     this.query = '',
     this.fechaDesde,
@@ -23,6 +25,14 @@ class NidoFilter {
   final String? comunidad;
   final String? provincia;
   final String? localidad;
+
+  /// Proyecto y campaña son campos distintos. `null` = todos;
+  /// [sinValor] = nidos sin proyecto / sin campaña.
+  final String? proyecto;
+  final String? campana;
+
+  /// Valor especial de [proyecto] y [campana]: los nidos que no tienen ninguno.
+  static const sinValor = '\u0000sin-valor';
 
   final EstadoReproductivo estado;
 
@@ -40,6 +50,8 @@ class NidoFilter {
   bool get isEmpty =>
       municipios.isEmpty &&
       !tieneFiltroGeografico &&
+      proyecto == null &&
+      campana == null &&
       estado == EstadoReproductivo.todos &&
       query.trim().isEmpty &&
       fechaDesde == null &&
@@ -61,6 +73,8 @@ class NidoFilter {
         comunidad: comunidad,
         provincia: provincia,
         localidad: localidad,
+        proyecto: proyecto,
+        campana: campana,
         estado: estado ?? this.estado,
         query: query ?? this.query,
         fechaDesde: limpiarFechas ? null : (fechaDesde ?? this.fechaDesde),
@@ -75,6 +89,23 @@ class NidoFilter {
         comunidad: comunidad,
         provincia: provincia,
         localidad: localidad,
+        proyecto: proyecto,
+        campana: campana,
+        estado: estado,
+        query: query,
+        fechaDesde: fechaDesde,
+        fechaHasta: fechaHasta,
+      );
+
+  /// Sustituye proyecto y campaña de una vez (permite nulos).
+  NidoFilter conProyectoCampana({String? proyecto, String? campana}) => NidoFilter(
+        municipios: municipios,
+        pais: pais,
+        comunidad: comunidad,
+        provincia: provincia,
+        localidad: localidad,
+        proyecto: proyecto,
+        campana: campana,
         estado: estado,
         query: query,
         fechaDesde: fechaDesde,

@@ -10,6 +10,7 @@ import 'informe_tecnico_screen.dart';
 import '../utils/geografia.dart';
 import '../widgets/entrega_archivos.dart';
 import '../widgets/filtro_geografico.dart';
+import '../widgets/filtro_proyecto_campana.dart';
 import '../widgets/responsive.dart';
 
 /// Exportación a Excel y PDF con filtros y selector de columnas a la carta.
@@ -43,6 +44,8 @@ class _ExportScreenState extends State<ExportScreen> {
         comunidad: _geo.comunidad,
         provincia: _geo.provincia,
         localidad: _geo.localidad,
+        proyecto: _geo.proyecto,
+        campana: _geo.campana,
         estado: _estado,
         fechaDesde: _rango?.start,
         fechaHasta: _rango?.end,
@@ -69,7 +72,8 @@ class _ExportScreenState extends State<ExportScreen> {
     final f = DateFormat('dd/MM/yyyy');
     return [
       if (_rango != null)
-        'campaña ${f.format(_rango!.start)} - ${f.format(_rango!.end)}',
+        'fechas ${f.format(_rango!.start)} - ${f.format(_rango!.end)}',
+      ...descripcionProyectoCampana(_geo),
       if (_geo.tieneFiltroGeografico) 'ubicación: ${resumenGeo(_geo)}',
       if (_municipiosSel.isNotEmpty) 'municipios: ${_municipiosSel.join(', ')}',
       if (_estado != EstadoReproductivo.todos) 'estado: ${_estado.etiqueta}',
@@ -143,7 +147,11 @@ class _ExportScreenState extends State<ExportScreen> {
     }
     if (!mounted) return;
     await nav.push(MaterialPageRoute<void>(
-      builder: (_) => InformeTecnicoScreen(nidos: nidos, filtros: _descripcionFiltros),
+      builder: (_) => InformeTecnicoScreen(
+        nidos: nidos,
+        filtros: _descripcionFiltros,
+        geo: _filter,
+      ),
     ));
   }
 
@@ -235,6 +243,17 @@ class _ExportScreenState extends State<ExportScreen> {
                   .localidades;
               _municipiosSel.removeWhere((m) => !validas.contains(m));
             });
+            _contar();
+          },
+        ),
+        const SizedBox(height: 16),
+        Text('Proyecto y campaña', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
+        FiltroProyectoCampana(
+          nidos: _todos,
+          filter: _geo,
+          onChanged: (g) {
+            setState(() => _geo = g);
             _contar();
           },
         ),

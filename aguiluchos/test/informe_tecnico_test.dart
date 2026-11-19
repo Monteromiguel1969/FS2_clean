@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:aguiluchos/app/app_services.dart';
+import 'package:aguiluchos/models/mapa_fondo.dart';
 import 'package:aguiluchos/models/nido_grefa_model.dart';
 import 'package:aguiluchos/screens/informe_tecnico_screen.dart';
 import 'package:aguiluchos/services/database_service.dart';
@@ -200,7 +201,20 @@ void main() {
 
       expect(find.byKey(const Key('inf-pdf')), findsOneWidget);
       expect(find.byKey(const Key('inf-word')), findsOneWidget);
+      expect(find.byKey(const Key('inf-pptx')), findsOneWidget);
+      expect(find.text('PowerPoint (.pptx)'), findsOneWidget);
       expect(find.byKey(const Key('sec-fichas')), findsOneWidget);
+      final fondo = find.byKey(const Key('inf-fondo'));
+      await tester.scrollUntilVisible(fondo, 200, scrollable: find.byType(Scrollable).first);
+      expect(find.text('Mapa (OSM)'), findsOneWidget);
+      expect(find.text('Ortofoto (PNOA)'), findsOneWidget);
+      expect(tester.widget<SegmentedButton<MapaFondo>>(fondo).selected, {MapaFondo.osm});
+      await tester.tap(find.text('Ortofoto (PNOA)'));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
+      await tester.pump();
+      expect(tester.widget<SegmentedButton<MapaFondo>>(fondo).selected, {MapaFondo.pnoa});
+      await tester.scrollUntilVisible(find.byKey(const Key('inf-titulo')), -200,
+          scrollable: find.byType(Scrollable).first);
       expect(find.textContaining('Filtros aplicados: municipio: Toledo'), findsOneWidget);
 
       await tester.enterText(find.byKey(const Key('inf-conclusiones')), 'Conclusión a medida');

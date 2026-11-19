@@ -4,13 +4,16 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../app/app_services.dart';
+import '../models/mapa_fondo.dart';
 import '../models/nido_constants.dart';
 import '../models/nido_filter.dart';
 import '../models/nido_grefa_model.dart';
 import '../services/excel_import_service.dart';
+import '../services/fondo_mapa_prefs.dart';
 import '../services/location_service.dart';
 import '../utils/geo.dart';
 import '../widgets/filtro_geografico.dart';
+import '../widgets/filtro_proyecto_campana.dart';
 import '../widgets/nido_card.dart';
 import '../widgets/nidos_map.dart';
 import '../widgets/responsive.dart';
@@ -39,6 +42,8 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<void>? _sub;
   bool _didInit = false;
   bool _buscandoGps = false;
+  MapaFondo _fondo = MapaFondo.osm;
+  bool _fondoTocado = false;
   final _searchCtrl = TextEditingController();
 
   @override
@@ -49,6 +54,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final db = AppServices.of(context).db;
     _sub = db.changes.listen((_) => _cargar());
     _cargar();
+    leerFondoMapa(db).then((f) {
+      if (mounted && !_fondoTocado && f != _fondo) setState(() => _fondo = f);
+    });
+  }
+
+  void _cambiarFondo(MapaFondo f) {
+    _fondoTocado = true;
+    setState(() => _fondo = f);
+    guardarFondoMapa(AppServices.of(context).db, f);
   }
 
   @override
@@ -63,7 +77,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final todos = await db.consultar(const NidoFilter());
     // Si la ubicación filtrada ya no existe (nido borrado o editado), se limpia.
     final original = _filter;
-    final filtro = sanearGeo(original, todos);
+    final filtro = sanearProyectoCampana(sanearGeo(original, todos), todos);
     final nidos = await db.consultar(filtro);
     if (!mounted) return;
     setState(() {
@@ -201,8 +215,8 @@ class _HomeScreenState extends State<HomeScreen> {
     ]);
     if (file == null || !mounted) return;
     try {
-      final report =
-          await ExcelImportService().importar(services.db, await file.readAsBytes());
+      final report = await ExcelImportService(idsPorCampana: true)
+          .importarTolerante(services.db, await file.readAsBytes());
       services.sync.requestSync();
       if (!mounted) return;
       await showDialog<void>(
@@ -374,7 +388,12 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: _vista == _Vista.lista
               ? _lista()
-              : NidosMap(nidos: _nidos, onOpenNido: _abrirNido),
+              : NidosMap(
+                  nidos: _nidos,
+                  onOpenNido: _abrirNido,
+                  fondo: _fondo,
+                  onFondo: _cambiarFondo,
+                ),
         ),
       ],
     );
@@ -401,7 +420,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const VerticalDivider(width: 1),
-        Expanded(child: NidosMap(nidos: _nidos, onOpenNido: _abrirNido)),
+        Expanded(child: NidosMap(
+                  nidos: _nidos,
+                  onOpenNido: _abrirNido,
+                  fondo: _fondo,
+                  onFondo: _cambiarFondo,
+                )),
       ],
     );
   }
@@ -482,6 +506,12 @@ class _Filtros extends StatelessWidget {
       plegable: true,
     );
 
+    final proyectoCampana = FiltroProyectoCampana(
+      nidos: todos,
+      filter: filter,
+      onChanged: onChanged,
+    );
+
     final estado = DropdownButtonFormField<EstadoReproductivo>(
       initialValue: filter.estado,
       isExpanded: true,
@@ -499,6 +529,8 @@ class _Filtros extends StatelessWidget {
         buscador,
         const SizedBox(height: 8),
         ubicacion,
+        const SizedBox(height: 8),
+        proyectoCampana,
         const SizedBox(height: 8),
         estado,
       ],
@@ -524,8 +556,21 @@ class _ImportDialog extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('${report.nuevos} nidos nuevos importados.'),
-              if (report.yaExistentes > 0)
-                Text('${report.yaExistentes} ya existían y no se han modificado.'),
+              if (report.actualizados > 0)
+                Text('${report.actualizados} nidos existentes completados '
+                    '(solo celdas con dato; nada se ha borrado ni pisado con vacíos).'),
+              if (report.sinCambios > 0)
+                Text('${report.sinCambios} nidos existentes ya estaban al día.'),
+              for (final c in report.cabecerasReconocidas)
+                if (c.campo == 'campana' &&
+                    c.cabecera.trim().toLowerCase().replaceAll('ñ', 'n') != 'campana')
+                  Text('«${c.cabecera}» se ha usado como Campaña.'),
+              if (!report.traeCampana)
+                const Text('El fichero no trae Campaña: los nidos nuevos quedan sin campaña.'),
+              if (report.columnasQueFaltan.isNotEmpty)
+                Text('No vienen en el fichero (se dejan como están): '
+                    '${report.columnasQueFaltan.join(', ')}.',
+                    style: const TextStyle(fontSize: 12)),
               if (p.filasOmitidas > 0)
                 Text('${p.filasOmitidas} filas vacías omitidas.'),
               if (p.columnasNoReconocidas.isNotEmpty)

@@ -6,7 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../utils/utm.dart';
 import 'nido_constants.dart';
 
-/// Fases de la campaña en las que se agrupan las 42 columnas de un nido.
+/// Fases de la campaña en las que se agrupan las columnas de un nido.
 enum NidoFase {
   ubicacion('Fase 1 · Ubicación e identificación', 'Ubicación'),
   incubacion('Fase 2 · Incubación', 'Incubación'),
@@ -109,7 +109,7 @@ List<String> _parseStringList(Object? v) {
 
 /// Registro de un nido de aguilucho (cenizo/pálido).
 ///
-/// Es un modelo mutable a propósito: las 42 columnas se editan desde un
+/// Es un modelo mutable a propósito: las 43 columnas se editan desde un
 /// formulario sobre una copia ([clone]) y se persisten de una vez.
 class NidoGrefaModel {
   NidoGrefaModel({
@@ -134,6 +134,10 @@ class NidoGrefaModel {
   /// Es anterior a cualquier edición real: si Supabase ya tiene el nido, gana
   /// siempre la versión remota (sin avisar de conflicto).
   static final DateTime marcaCargaInicial = DateTime.utc(2026, 1, 1);
+
+  /// `true` si la fila remota no traía la columna `campana` (Supabase aún sin
+  /// `migracion_campana.sql`): al aplicarla se conserva la campaña local.
+  bool remotoSinCampana = false;
 
   /// `true` si el nido sigue tal cual vino de la carga inicial.
   bool get esCargaInicialSinEditar =>
@@ -162,6 +166,10 @@ class NidoGrefaModel {
   String? numeracion;
   String? etiqueta;
   String? proyecto;
+
+  /// Campaña (tanda dentro del proyecto: 2025, 2026…). Campo distinto de
+  /// [proyecto]; `null`/vacío = nido sin campaña.
+  String? campana;
   String? propietario;
   String? tlfn;
   String? googleMapsUrl;
@@ -419,6 +427,7 @@ class NidoGrefaModel {
       remoteImageUrls: _parseStringList(json['imagenes_urls']),
     );
     _readColumns(n, json);
+    n.remotoSinCampana = !json.containsKey('campana');
     return n;
   }
 
@@ -534,12 +543,13 @@ const _f2 = NidoFase.incubacion;
 const _f3 = NidoFase.seguimiento;
 const _f4 = NidoFase.cosecha;
 
-/// Las 42 columnas de datos de un nido, en orden de fase.
+/// Las 43 columnas de datos de un nido (las 42 de la app + `campana`), en orden de fase.
 final List<NidoColumn> nidoColumns = List.unmodifiable(<NidoColumn>[
-  // Fase 1 (14)
+  // Fase 1 (15)
   _text('numeracion', 'Numeración', _f1, (n) => n.numeracion, (n, v) => n.numeracion = v),
   _text('etiqueta', 'Etiqueta', _f1, (n) => n.etiqueta, (n, v) => n.etiqueta = v),
   _text('proyecto', 'Proyecto', _f1, (n) => n.proyecto, (n, v) => n.proyecto = v),
+  _text('campana', 'Campaña', _f1, (n) => n.campana, (n, v) => n.campana = v),
   _text('propietario', 'Propietario', _f1, (n) => n.propietario, (n, v) => n.propietario = v),
   _text('tlfn', 'Teléfono', _f1, (n) => n.tlfn, (n, v) => n.tlfn = v),
   _text('google_maps_url', 'URL Google Maps', _f1, (n) => n.googleMapsUrl, (n, v) => n.googleMapsUrl = v),

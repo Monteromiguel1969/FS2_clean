@@ -39,6 +39,7 @@ Future<void> entregarArchivos(
               leading: Icon(switch (a.ext) {
                 'pdf' => Icons.picture_as_pdf,
                 'xlsx' => Icons.table_chart,
+                'pptx' => Icons.slideshow,
                 _ => Icons.description_outlined,
               }),
               title: Text(a.nombre,

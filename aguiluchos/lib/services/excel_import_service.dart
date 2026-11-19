@@ -33,11 +33,33 @@ class ImportReport {
     required this.nuevos,
     required this.yaExistentes,
     required this.parse,
+    this.actualizados = 0,
+    this.sinCambios = 0,
+    this.columnasQueFaltan = const [],
+    this.cabecerasReconocidas = const [],
+    this.traeProyecto = false,
+    this.traeCampana = false,
+    this.tolerante = false,
   });
 
   final int nuevos;
+
+  /// Nidos que ya existían (en la importación tolerante: actualizados + sin cambios).
   final int yaExistentes;
   final ImportParseResult parse;
+
+  /// Importación tolerante: nidos existentes a los que se completaron celdas.
+  final int actualizados;
+  final int sinCambios;
+
+  /// Campos de la app que el fichero no trae (no se tocan).
+  final List<String> columnasQueFaltan;
+
+  /// Cabecera del fichero -> campo de la app («Año» -> «Campaña»).
+  final List<({String cabecera, String campo})> cabecerasReconocidas;
+  final bool traeProyecto;
+  final bool traeCampana;
+  final bool tolerante;
 }
 
 /// Importa el Excel de campaña de GREFA (p. ej. "DATOS FINALES AGUILUCHO 2026").
@@ -59,9 +81,15 @@ class ImportReport {
 /// Los ids son deterministas (UUID v5 sobre la numeración), de modo que
 /// reimportar el mismo fichero no duplica nidos.
 class ExcelImportService {
-  ExcelImportService({this.campana = 'aguiluchos-2026'});
+  ExcelImportService({this.campana = 'aguiluchos-2026', this.idsPorCampana = false});
 
+  /// Semilla de los ids deterministas (carga inicial empaquetada).
   final String campana;
+
+  /// Importación tolerante: el id de un nido nuevo se deriva de su campaña
+  /// (`aguiluchos-<campaña>/nido/<numeración>`), igual que en el panel web, de
+  /// modo que importar el mismo fichero en la app y en el panel no duplica nidos.
+  final bool idsPorCampana;
 
   static const _sinDato = {
     '', '—', '–', '-', '--', '---', '?', 'indet', 'indet.', 'indeter.',
@@ -111,23 +139,86 @@ class ExcelImportService {
     'observacionesii': 'observaciones_ii',
     'anillaspvc': 'anillas_pvc',
     'anillasmetalica': 'anillas_metalica',
+    'campana': 'campana',
+    // «Año» (o «Ano») vale como campaña, salvo que el fichero traiga «Campaña».
+    'ano': 'campana',
+    'anyo': 'campana',
+    'temporada': 'campana',
+    'localidad': 'municipio',
+    'poblacion': 'municipio',
+    'catastro': 'referencia_catastral',
+    'refcatastral': 'referencia_catastral',
+    'x': 'coordenada_x',
+    'utmx': 'coordenada_x',
+    'este': 'coordenada_x',
+    'y': 'coordenada_y',
+    'utmy': 'coordenada_y',
+    'norte': 'coordenada_y',
+    'huevosalentrarnido': 'num_huevos_entrada',
+    'huevosentrada': 'num_huevos_entrada',
+    'pollosnacidos': 'num_pollos_nacidos',
+    'pollosvolados': 'num_pollos_volados',
+    'pollosmuertos': 'num_pollos_muertos',
+    'edad': 'edad_dias',
+    'tipodemanejo': '_manejo',
+    'manejo': '_manejo',
   };
 
   // Cabeceras con sufijos informativos: "Fecha de eclosión (30 dias)".
   static const _prefijos = <String, String>{
     'fechadeeclosion': 'fecha_eclosion',
     'fechadevuelo': 'fecha_vuelo',
+    'fechadeincubacion': 'fecha_incubacion',
+    'fechadecosecha': 'fecha_cosecha',
+    'fechadeentrada': 'fecha_entrada_nido',
     'tipodeacciones': '_manejo',
   };
 
+  static final _invisibles = RegExp(r'[\u200B-\u200F\u2060\uFEFF\u00AD]');
+
   static String _normalizarCabecera(Object? h) {
-    var s = (h ?? '').toString().toLowerCase();
+    var s = (h ?? '')
+        .toString()
+        .replaceAll(_invisibles, '')
+        .replaceAll(RegExp(r'[\u00A0\u2007\u202F]'), ' ')
+        .toLowerCase();
     const from = 'áàäâéèëêíìïîóòöôúùüûñ';
     const to = 'aaaaeeeeiiiioooouuuun';
     for (var i = 0; i < from.length; i++) {
       s = s.replaceAll(from[i], to[i]);
     }
     return s.replaceAll(RegExp(r'[^a-z0-9]'), '');
+  }
+
+  /// Cabecera normalizada ignorando lo que va entre paréntesis («Fecha de eclosión (30 días)»).
+  static String _normalizarEncabezado(Object? h) =>
+      _normalizarCabecera((h ?? '').toString().replaceAll(RegExp(r'\([^)]*\)'), ' '));
+
+  static bool _unaEdicion(String a, String b) {
+    if ((a.length - b.length).abs() > 1) return false;
+    var i = 0;
+    while (i < a.length && i < b.length && a[i] == b[i]) {
+      i++;
+    }
+    if (a.length == b.length) return a.substring(i + 1) == b.substring(i + 1);
+    final corta = a.length < b.length ? a : b;
+    final larga = a.length < b.length ? b : a;
+    return corta.substring(i) == larga.substring(i + 1);
+  }
+
+  /// Segunda pasada para cabeceras sin coincidencia exacta («Campañas»,
+  /// «Año campaña», «Proyecto:», erratas de una letra…), solo si el campo sigue libre.
+  static String? _claveAproximada(String norm, bool Function(String) libre) {
+    if (norm.contains('campan') && libre('campana')) return 'campana';
+    if (norm.contains('proyecto') && libre('proyecto')) return 'proyecto';
+    if (norm.length < 6) return null;
+    final cercanos = <String>{};
+    for (final e in {..._exactas, ..._prefijos}.entries) {
+      if (e.key.length >= 6 && libre(e.value) && _unaEdicion(norm, e.key)) {
+        cercanos.add(e.value);
+      }
+    }
+    return cercanos.length == 1 ? cercanos.first : null;
   }
 
   static String? _claveDe(String norm) {
@@ -141,7 +232,12 @@ class ExcelImportService {
 
   // ── API ──────────────────────────────────────────────────────────────────
 
-  ImportParseResult parse(Uint8List bytes, {String? hoja}) {
+  ImportParseResult parse(Uint8List bytes, {String? hoja}) =>
+      _leer(bytes, hoja: hoja).resultado;
+
+  /// Lee la hoja: empareja cabeceras, convierte cada fila y anota qué campos
+  /// traen dato (para la importación tolerante).
+  LecturaExcel _leer(Uint8List bytes, {String? hoja}) {
     final book = xl.Excel.decodeBytes(bytes);
     final nombreHoja = hoja ?? book.tables.keys.first;
     final sheet = book.tables[nombreHoja];
@@ -155,14 +251,35 @@ class ExcelImportService {
 
     final cols = <String, int>{};
     final desconocidas = <String>[];
+    final reconocidas = <({String cabecera, String campo})>[];
+    final cabeceras = <(int, String, String)>[]; // (columna, texto, normalizada)
     for (var i = 0; i < rows.first.length; i++) {
       final raw = _texto(rows.first[i]?.value);
       if (raw == null) continue;
-      final clave = _claveDe(_normalizarCabecera(raw));
+      cabeceras.add((i, raw.trim(), _normalizarEncabezado(raw)));
+    }
+    // «Año» vale como campaña, pero si el fichero trae «Campaña», manda esa.
+    final hayCampanaPropia = cabeceras.any((c) => c.$3 == 'campana');
+    final pendientes = <(int, String, String)>[];
+    for (final (i, texto, norm) in cabeceras) {
+      final clave = _claveDe(norm);
       if (clave == null) {
-        desconocidas.add(raw.trim());
+        pendientes.add((i, texto, norm));
+      } else if (cols.containsKey(clave) ||
+          (hayCampanaPropia && clave == 'campana' && norm != 'campana')) {
+        desconocidas.add(texto);
       } else {
-        cols.putIfAbsent(clave, () => i);
+        cols[clave] = i;
+        reconocidas.add((cabecera: texto, campo: clave));
+      }
+    }
+    for (final (i, texto, norm) in pendientes) {
+      final clave = _claveAproximada(norm, (k) => !cols.containsKey(k));
+      if (clave == null) {
+        desconocidas.add(texto);
+      } else {
+        cols[clave] = i;
+        reconocidas.add((cabecera: texto, campo: clave));
       }
     }
     if (!cols.containsKey('etiqueta') && !cols.containsKey('_numeracion')) {
@@ -171,6 +288,7 @@ class ExcelImportService {
     }
 
     final nidos = <NidoGrefaModel>[];
+    final lecturas = <FilaExcelLeida>[];
     final avisos = <String>[];
     var omitidas = 0;
     var leidas = 0;
@@ -201,14 +319,184 @@ class ExcelImportService {
         avisos: avisos,
       );
       nidos.add(n);
+      lecturas.add(FilaExcelLeida(n, {
+        for (final k in cols.keys)
+          if (_texto(v(k)) != null) k,
+      }));
     }
 
-    return ImportParseResult(
+    final resultado = ImportParseResult(
       nidos: nidos,
       avisos: avisos,
       filasLeidas: leidas,
       filasOmitidas: omitidas,
       columnasNoReconocidas: desconocidas,
+    );
+    final traen = {for (final k in cols.keys) k == '_numeracion' ? 'numeracion' : k};
+    return LecturaExcel(
+      resultado,
+      lecturas,
+      reconocidas,
+      [
+        for (final c in nidoColumns)
+          if (!traen.contains(c.key) &&
+              !(c.key == 'tipo_acciones_manejo' && cols.containsKey('_manejo')))
+            c.label,
+      ],
+      traeProyecto: cols.containsKey('proyecto'),
+      traeCampana: cols.containsKey('campana'),
+    );
+  }
+
+  // ── Importación tolerante ────────────────────────────────────────────────
+
+  static String _k(String? t) => _normalizarCabecera(t ?? '');
+  static bool _blanco(String? t) => (t ?? '').trim().isEmpty;
+  static bool _compatible(String? a, String? b) =>
+      _blanco(a) || _blanco(b) || _k(a) == _k(b);
+
+  static bool _iguales(Object? a, Object? b) {
+    if (a is List || b is List) {
+      final x = [...((a as List?) ?? const [])]..sort();
+      final y = [...((b as List?) ?? const [])]..sort();
+      return x.join('|') == y.join('|');
+    }
+    if (a is String || b is String) return (a ?? '').toString().trim() == (b ?? '').toString().trim();
+    return a == b;
+  }
+
+  /// Campos de [cand] que traen dato en el fichero y por tanto pueden aplicarse.
+  /// Lo que falta (columna ausente o celda vacía) nunca borra ni pisa nada.
+  static Set<String> _camposConDato(FilaExcelLeida f) {
+    final c = f.nido;
+    final p = f.presentes;
+    final out = <String>{};
+    for (final col in nidoColumns) {
+      final k = col.key;
+      final valor = col.read(c);
+      final hay = switch (k) {
+        'numeracion' => p.contains('_numeracion'),
+        'intervencion' => p.contains('intervencion') || c.tipoAccionesManejo.isNotEmpty,
+        'tipo_acciones_manejo' => c.tipoAccionesManejo.isNotEmpty,
+        'vuelan_pollos' => p.contains('vuelan_pollos') || p.contains('num_pollos_volados'),
+        'observaciones_ii' => c.observacionesII != null,
+        'resultado_reproductivo' || 'estado_final' => valor != null,
+        'coordenada_x' || 'coordenada_y' => c.coordenadaX != null && c.coordenadaY != null,
+        _ => p.contains(k) && valor != null,
+      };
+      if (hay) out.add(k);
+    }
+    return out;
+  }
+
+  /// Decide qué hacer con cada fila sin tocar la base de datos.
+  ///
+  /// Empareja cada fila con un nido existente por numeración (o etiqueta) siendo
+  /// compatibles proyecto y campaña (uno vacío vale para cualquiera). A los
+  /// existentes solo se les completan las celdas con dato; los demás son nuevos.
+  PlanImportacion planificar(List<NidoGrefaModel> existentes, Uint8List bytes) {
+    final lectura = _leer(bytes);
+    final registros = [
+      for (final e in existentes) _Registro(e.clone(), nuevo: false),
+    ];
+    final idsUsados = {for (final e in existentes) e.id};
+    var sinCambios = 0;
+
+    for (final f in lectura.filas) {
+      final cand = f.nido;
+      final porNum = !_blanco(cand.numeracion);
+      final valor = porNum ? _k(cand.numeracion) : _k(cand.etiqueta);
+      final candidatos = registros.where((r) {
+        final dato = porNum ? r.nido.numeracion : r.nido.etiqueta;
+        return _k(dato) == valor &&
+            _compatible(r.nido.proyecto, cand.proyecto) &&
+            _compatible(r.nido.campana, cand.campana);
+      }).toList();
+      final exacto = _blanco(cand.campana)
+          ? null
+          : candidatos.where((r) => _k(r.nido.campana) == _k(cand.campana)).firstOrNull;
+      var reg = exacto ?? candidatos.firstOrNull;
+
+      if (reg == null) {
+        var n = cand;
+        if (idsUsados.contains(n.id)) {
+          n = NidoGrefaModel.fromMap({...cand.toMap(), 'id': const Uuid().v4()});
+        }
+        idsUsados.add(n.id);
+        reg = _Registro(n, nuevo: true);
+        registros.add(reg);
+      }
+      reg.tocado = true;
+      if (reg.nuevo && !identical(reg.nido, cand)) {
+        // Fila repetida dentro del propio fichero: completa el nido nuevo.
+        _aplicar(reg, cand, _camposConDato(f));
+      } else if (!reg.nuevo) {
+        _aplicar(reg, cand, _camposConDato(f));
+      }
+    }
+
+    final nuevos = <NidoGrefaModel>[];
+    final actualizar = <NidoGrefaModel>[];
+    final camposCambiados = <String, Set<String>>{};
+    for (final r in registros) {
+      if (!r.tocado) continue;
+      if (r.nuevo) {
+        nuevos.add(r.nido);
+      } else if (r.cambios.isNotEmpty) {
+        actualizar.add(r.nido);
+        camposCambiados[r.nido.id] = r.cambios;
+      } else {
+        sinCambios++;
+      }
+    }
+    return PlanImportacion(
+      nuevos: nuevos,
+      actualizar: actualizar,
+      camposCambiados: camposCambiados,
+      sinCambios: sinCambios,
+      lectura: lectura,
+    );
+  }
+
+  void _aplicar(_Registro reg, NidoGrefaModel cand, Set<String> campos) {
+    for (final col in nidoColumns) {
+      if (!campos.contains(col.key)) continue;
+      final nuevo = col.read(cand);
+      if (_iguales(col.read(reg.nido), nuevo)) continue;
+      col.write(reg.nido, nuevo);
+      reg.cambios.add(col.key);
+    }
+  }
+
+  /// Importación tolerante a SQLite: columnas que faltan o celdas vacías no
+  /// machacan datos; los nidos existentes solo se completan.
+  Future<ImportReport> importarTolerante(DatabaseService db, Uint8List bytes,
+      {DateTime? updatedAt}) async {
+    final existentes = await db.consultar();
+    final plan = planificar(existentes, bytes);
+    var nuevos = 0;
+    for (var n in plan.nuevos) {
+      if (await db.obtener(n.id, incluirBorrados: true) != null) {
+        n = NidoGrefaModel.fromMap({...n.toMap(), 'id': const Uuid().v4()});
+      }
+      await db.guardar(n, updatedAt: updatedAt);
+      nuevos++;
+    }
+    for (final n in plan.actualizar) {
+      await db.guardar(n, updatedAt: updatedAt);
+    }
+    final l = plan.lectura;
+    return ImportReport(
+      nuevos: nuevos,
+      yaExistentes: plan.actualizar.length + plan.sinCambios,
+      actualizados: plan.actualizar.length,
+      sinCambios: plan.sinCambios,
+      parse: l.resultado,
+      columnasQueFaltan: l.columnasQueFaltan,
+      cabecerasReconocidas: l.reconocidas,
+      traeProyecto: l.traeProyecto,
+      traeCampana: l.traeCampana,
+      tolerante: true,
     );
   }
 
@@ -242,8 +530,11 @@ class ExcelImportService {
     required int filaExcel,
     required List<String> avisos,
   }) {
-    final id = const Uuid().v5(
-        Namespace.url.value, '$campana/nido/${numeracion ?? 'fila$filaExcel'}');
+    final campanaFila = _texto(v('campana'));
+    final semilla = idsPorCampana
+        ? 'aguiluchos-${campanaFila ?? '2026'}/${numeracion != null ? 'nido' : 'etiqueta'}/${numeracion ?? etiqueta ?? 'fila$filaExcel'}'
+        : '$campana/nido/${numeracion ?? 'fila$filaExcel'}';
+    final id = const Uuid().v5(Namespace.url.value, semilla);
     final n = NidoGrefaModel(id: id);
     final ref = 'Fila $filaExcel (${etiqueta ?? numeracion})';
     void aviso(String m) => avisos.add('$ref: $m');
@@ -253,6 +544,7 @@ class ExcelImportService {
     n.numeracion = numeracion;
     n.etiqueta = etiqueta;
     n.proyecto = _texto(v('proyecto'));
+    n.campana = campanaFila;
     n.propietario = _texto(v('propietario'));
     n.tlfn = _telefono(v('tlfn'));
     final url = _texto(v('google_maps_url'));
@@ -531,4 +823,54 @@ class ExcelImportService {
     if (pollo) return EstadosFracaso.pollos;
     return null;
   }
+}
+
+class FilaExcelLeida {
+  FilaExcelLeida(this.nido, this.presentes);
+  final NidoGrefaModel nido;
+
+  /// Claves de columna (`_numeracion`, `_manejo`…) cuya celda trae dato.
+  final Set<String> presentes;
+}
+
+class LecturaExcel {
+  LecturaExcel(this.resultado, this.filas, this.reconocidas, this.columnasQueFaltan,
+      {required this.traeProyecto, required this.traeCampana});
+  final ImportParseResult resultado;
+  final List<FilaExcelLeida> filas;
+  final List<({String cabecera, String campo})> reconocidas;
+  final List<String> columnasQueFaltan;
+  final bool traeProyecto;
+  final bool traeCampana;
+}
+
+class _Registro {
+  _Registro(this.nido, {required this.nuevo});
+  final NidoGrefaModel nido;
+  final bool nuevo;
+  bool tocado = false;
+  final Set<String> cambios = {};
+}
+
+/// Qué haría una importación tolerante (sin haber tocado nada todavía).
+class PlanImportacion {
+  PlanImportacion({
+    required this.nuevos,
+    required this.actualizar,
+    required this.camposCambiados,
+    required this.sinCambios,
+    required this.lectura,
+  });
+
+  final List<NidoGrefaModel> nuevos;
+
+  /// Existentes con los campos ya completados (listos para guardar).
+  final List<NidoGrefaModel> actualizar;
+
+  /// id del nido existente -> claves de columna que cambian.
+  final Map<String, Set<String>> camposCambiados;
+  final int sinCambios;
+  final LecturaExcel lectura;
+
+  ImportParseResult get parse => lectura.resultado;
 }

@@ -66,7 +66,7 @@ lib/
   config/env.dart           --dart-define (SUPABASE_URL / SUPABASE_ANON_KEY)
   app/                      MaterialApp (es_ES, tema) + AppServices (InheritedWidget)
   models/
-    nido_grefa_model.dart   NidoGrefaModel + metadatos de las 42 columnas (NidoColumn)
+    nido_grefa_model.dart   NidoGrefaModel + metadatos de las 43 columnas (NidoColumn)
     nido_constants.dart     Catálogos (especies, causas, manejo...), 30 días de incubación
     nido_filter.dart        Filtros de consulta (municipio, estado, texto, fechas)
   services/
@@ -85,7 +85,7 @@ supabase/schema.sql         Tabla, trigger, bucket y RLS
 elige en `DatabaseService.configureDesktopFactory()`). Se descartó Isar: SQLite + FFI da
 un único motor probado en las cuatro plataformas y consultas SQL para los filtros.
 
-**Modelo**: `NidoGrefaModel` agrupa las 42 columnas en 4 fases. La lista `nidoColumns`
+**Modelo**: `NidoGrefaModel` agrupa las 43 columnas en 4 fases. La lista `nidoColumns`
 (clave snake_case, etiqueta, fase, tipo, getter/setter) es la única fuente de verdad del
 esquema SQLite, `toMap/fromMap`, `toJson/fromJson` (Supabase) y del selector de columnas
 de exportación. Campos de control: `id` (UUID), `updatedAt`, `isSynced`, `hasConflict`,
@@ -112,6 +112,16 @@ las columnas por el nombre de la cabecera y normaliza los datos sucios del Excel
 columnas tipadas se conserva en *Observaciones II* (texto original de "Tipo de acciones y/o manejo",
 fechas aproximadas, edades originales). Los ids son deterministas (UUID v5 sobre la numeración), así
 que reimportar no duplica ni pisa ediciones. Los nidos importados quedan pendientes de sincronizar.
+
+**Importación tolerante (v1.8)**: el menú ⋮ usa `ExcelImportService.importarTolerante`, la misma
+lógica que el panel web. Las columnas que faltan y las celdas vacías **nunca** machacan datos: un
+nido que ya existe (misma numeración o etiqueta, con proyecto y campaña compatibles) solo recibe las
+celdas con dato; los que no existen se crean. Cabeceras con ruido (espacios, tildes, plurales,
+erratas de una letra) se reconocen igual. **Año / Ano / Anyo / Temporada** se leen como *Campaña*;
+si el fichero trae «Campaña» y «Año», manda «Campaña». Los ids nuevos dependen de la campaña
+(`aguiluchos-<campaña>/nido/<numeración>`), así que importar el mismo fichero en la app y en el
+panel no duplica nidos. Al terminar se muestra qué se ha creado, completado y qué columnas no venían.
+
 Prueba contra el fichero real (no versionado, tiene datos personales):
 
 ```bash
@@ -167,10 +177,38 @@ sin configurar) o muestra un indicador de progreso.
 fiable, así que "Tomar Fotografía" abre el selector de archivos. Tocar una miniatura la abre a
 pantalla completa (zoom) con opción de eliminar.
 
+### Proyecto y campaña
+
+Son dos campos distintos de `nidos_grefa` (`proyecto` y `campana`, texto). La lista, el mapa y la
+exportación tienen filtro de proyecto y de campaña, con la opción «Sin proyecto» / «Sin campaña».
+Los nidos anteriores a este campo (o importados sin él) se tratan como **sin campaña**; la app no
+inventa ninguna. Base local v2: `onUpgrade` añade la columna `campana`. Para sincronizarla con Supabase
+hay que haber ejecutado `supabase/migracion_campana.sql`; si aún no está, la app sigue sincronizando
+el resto de campos y conserva la campaña en el dispositivo (sin subirla).
+
+### Mapa: fondo Mapa u Ortofoto
+
+El mapa de la pantalla principal y los mapas de los informes se pueden ver sobre **Mapa (OSM)** u
+**Ortofoto (PNOA, IGN)**. La elección se recuerda en el dispositivo (`sync_meta`, no se sincroniza).
+Los mapas del informe y de la presentación encuadran solo los nidos de la selección filtrada
+(comunidad, provincia, localidad…) y se titulan con el nivel geográfico más concreto filtrado.
+
+### Presentación PowerPoint (.pptx)
+
+En el cuadro del informe técnico (Exportar → Informe técnico) el botón **PowerPoint (.pptx)** genera
+la presentación con lo mismo que el informe: nidos de la selección, título, referencia, destinatario,
+elaborado por, cargo, secciones activables, mapas general / comunidad / provincia / localidad con el
+fondo elegido y textos editables (alcance y observaciones). Solo lleva lo marcado. No incluye
+propietario, teléfono ni referencia catastral; las celdas sin dato quedan en blanco. Se entrega con
+«Guardar en…» o compartiendo (`share_plus`). El `.pptx` se escribe en el propio dispositivo
+(`presentacion_pptx.dart`, Open XML con `archive`); no usa Colab ni servidores. Los gráficos del
+resumen (resultado, pollos, tasas, causas) son barras dibujadas con formas, no gráficos nativos
+editables de PowerPoint.
+
 ### Exportación
 
-`ExportScreen`: filtros (rango de campaña sobre la fecha de entrada/incubación, municipios,
-Éxito/Fracaso/Todos), selector de las 42 columnas agrupadas por fase, **Excel (.xlsx)** con las
+`ExportScreen`: filtros (rango de campaña sobre la fecha de entrada/incubación, proyecto, campaña,
+municipios, Éxito/Fracaso/Todos), selector de las 43 columnas agrupadas por fase, **Excel (.xlsx)** con las
 columnas elegidas e **informe PDF** (membrete GREFA, resumen ejecutivo con nacidos / volados /
 muertos, tasa de éxito, productividad, causas de fracaso y tabla de nidos con justificación de
 conservación). Compartir con `share_plus` (WhatsApp, correo…) o guardar en el dispositivo; en
@@ -188,8 +226,10 @@ archivos) se ofrece guardar.
 
 ## Limitaciones conocidas
 
-* El mapa usa teselas de OpenStreetMap: sin conexión solo se ven las teselas ya cacheadas
-  (los marcadores sí aparecen). Para uso intensivo conviene un proveedor de teselas propio.
+* El mapa usa teselas de OpenStreetMap o de la ortofoto PNOA del IGN: sin conexión solo se ven las
+  teselas ya cacheadas (los marcadores sí aparecen). Para uso intensivo conviene un proveedor de
+  teselas propio.
+* La presentación .pptx no incluye fotografías de los nidos.
 * La captura de GPS no funciona en Linux (sin soporte de `geolocator`); se pueden teclear las
   coordenadas UTM.
 * La app no gestiona usuarios: se crean en el panel de Supabase (ver "Configurar Supabase").

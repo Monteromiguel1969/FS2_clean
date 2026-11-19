@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../models/mapa_fondo.dart';
 import '../models/nido_grefa_model.dart';
 import 'maps_launcher.dart';
 import 'nido_card.dart';
@@ -10,10 +11,20 @@ import 'nido_card.dart';
 /// marcador por nido con coordenadas. Al pulsar un marcador se muestra una
 /// ficha con el botón "Abrir en Google Maps".
 class NidosMap extends StatefulWidget {
-  const NidosMap({super.key, required this.nidos, required this.onOpenNido});
+  const NidosMap({
+    super.key,
+    required this.nidos,
+    required this.onOpenNido,
+    this.fondo = MapaFondo.osm,
+    this.onFondo,
+  });
 
   final List<NidoGrefaModel> nidos;
   final ValueChanged<NidoGrefaModel> onOpenNido;
+
+  /// Fondo del mapa (Mapa OSM u Ortofoto PNOA). El selector solo se muestra si hay [onFondo].
+  final MapaFondo fondo;
+  final ValueChanged<MapaFondo>? onFondo;
 
   @override
   State<NidosMap> createState() => _NidosMapState();
@@ -76,8 +87,10 @@ class _NidosMapState extends State<NidosMap> {
           ),
           children: [
             TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              key: ValueKey('fondo-${widget.fondo.id}'),
+              urlTemplate: widget.fondo.plantilla,
               userAgentPackageName: 'org.grefa.aguiluchos',
+              maxNativeZoom: 19,
             ),
             MarkerLayer(markers: [
               for (final n in nidos)
@@ -96,14 +109,38 @@ class _NidosMapState extends State<NidosMap> {
                   ),
                 ),
             ]),
-            const RichAttributionWidget(attributions: [
-              TextSourceAttribution('© OpenStreetMap contributors'),
+            RichAttributionWidget(attributions: [
+              TextSourceAttribution(widget.fondo.atribucion),
             ]),
           ],
         ),
+        if (widget.onFondo != null)
+          Positioned(
+            top: 8,
+            right: 8,
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: SegmentedButton<MapaFondo>(
+                  key: const Key('mapa-fondo'),
+                  showSelectedIcon: false,
+                  style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                  segments: [
+                    for (final f in MapaFondo.values)
+                      ButtonSegment(
+                        value: f,
+                        label: Text(f == MapaFondo.osm ? 'Mapa' : 'Ortofoto'),
+                      ),
+                  ],
+                  selected: {widget.fondo},
+                  onSelectionChanged: (v) => widget.onFondo!(v.first),
+                ),
+              ),
+            ),
+          ),
         if (nidos.isEmpty)
           const Positioned(
-            top: 12,
+            top: 56,
             left: 12,
             right: 12,
             child: Card(

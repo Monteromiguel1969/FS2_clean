@@ -279,6 +279,9 @@ class _NidoDetailScreenState extends State<NidoDetailScreen>
             validator: (v) =>
                 (v ?? '').trim().isEmpty ? 'La etiqueta es obligatoria' : null),
         _desplegable('proyecto', Proyectos.todos),
+        _field('campana',
+            label: 'Campaña',
+            keyboard: TextInputType.text),
         _field('propietario'),
         _field('tlfn',
             keyboard: TextInputType.phone,

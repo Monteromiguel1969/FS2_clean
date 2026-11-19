@@ -5,10 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../app/app_services.dart';
+import '../models/mapa_fondo.dart';
+import '../models/nido_filter.dart';
 import '../models/nido_grefa_model.dart';
 import '../services/app_directories.dart';
+import '../services/fondo_mapa_prefs.dart';
 import '../services/informe_tecnico.dart';
 import '../services/mapa_imagen.dart';
+import '../services/presentacion.dart';
+import '../services/presentacion_pptx.dart';
 import '../widgets/entrega_archivos.dart';
 import '../widgets/responsive.dart';
 
@@ -21,6 +26,7 @@ class InformeTecnicoScreen extends StatefulWidget {
     this.filtros = '',
     this.individual = false,
     this.fabricaMapas,
+    this.geo,
   });
 
   final List<NidoGrefaModel> nidos;
@@ -31,8 +37,13 @@ class InformeTecnicoScreen extends StatefulWidget {
   /// Informe de un solo nido (ficha técnica + conclusiones).
   final bool individual;
 
-  /// Generador de mapas (inyectable en pruebas; por defecto usa OpenStreetMap).
-  final GeneradorMapas Function()? fabricaMapas;
+  /// Generador de mapas (inyectable en pruebas). Recibe el fondo elegido
+  /// (Mapa OSM u Ortofoto PNOA); por defecto descarga las teselas de internet.
+  final GeneradorMapas Function(MapaFondo fondo)? fabricaMapas;
+
+  /// Filtro aplicado en la selección (comunidad, provincia, localidad, proyecto,
+  /// campaña): titula el mapa general y el ámbito de la presentación.
+  final NidoFilter? geo;
 
   @override
   State<InformeTecnicoScreen> createState() => _InformeTecnicoScreenState();
@@ -56,6 +67,8 @@ class _InformeTecnicoScreenState extends State<InformeTecnicoScreen> {
   String? _progreso;
   List<MapaGenerado>? _mapasCache;
   String? _mapasClave;
+  MapaFondo _fondo = MapaFondo.osm;
+  bool _fondoTocado = false;
 
   @override
   void didChangeDependencies() {
@@ -88,6 +101,14 @@ class _InformeTecnicoScreenState extends State<InformeTecnicoScreen> {
     _alcance.text = _b.alcance;
     _conclusiones.text = _b.conclusiones;
     _cargarFirma();
+    leerFondoMapa(AppServices.of(context).db).then((f) {
+      if (mounted && !_fondoTocado && f != _fondo) {
+        setState(() {
+          _fondo = f;
+          _mapasCache = null;
+        });
+      }
+    });
   }
 
   @override
@@ -150,9 +171,11 @@ class _InformeTecnicoScreenState extends State<InformeTecnicoScreen> {
         ? (_mapaIndividual ? <String>{'general'} : <String>{})
         : {..._nivelesMapa};
     if (niveles.isEmpty) return [];
-    final clave = (niveles.toList()..sort()).join(',');
+    final clave = '${_fondo.id}:${(niveles.toList()..sort()).join(',')}';
     if (_mapasCache != null && _mapasClave == clave) return _mapasCache!;
-    final gen = (widget.fabricaMapas ?? GeneradorMapas.new)();
+    final gen = widget.fabricaMapas != null
+        ? widget.fabricaMapas!(_fondo)
+        : GeneradorMapas(fondo: _fondo);
     final etiqueta = widget.nidos.isEmpty
         ? ''
         : (widget.nidos.first.etiqueta ?? widget.nidos.first.numeracion ?? '');
@@ -160,7 +183,7 @@ class _InformeTecnicoScreenState extends State<InformeTecnicoScreen> {
     final r = await gen.generar(
       widget.nidos,
       niveles,
-      tituloGeneral: widget.individual ? 'Nido $etiqueta' : 'Todos los nidos',
+      tituloGeneral: widget.individual ? 'Nido $etiqueta' : _tituloMapaGeneral,
       progreso: (h, t) {
         if (mounted) setState(() => _progreso = 'Generando mapas de localización ($h/$t)…');
       },
@@ -168,6 +191,36 @@ class _InformeTecnicoScreenState extends State<InformeTecnicoScreen> {
     _mapasCache = r;
     _mapasClave = clave;
     return r;
+  }
+
+  String get _tituloMapaGeneral {
+    final g = widget.geo;
+    if (g == null) return 'Todos los nidos';
+    return tituloMapaGeneral(
+        pais: g.pais, comunidad: g.comunidad, provincia: g.provincia, localidad: g.localidad);
+  }
+
+  String get _ambito {
+    final g = widget.geo;
+    if (g == null) return 'Todos los nidos';
+    return ambitoPresentacion(
+      proyecto: g.proyecto,
+      campana: g.campana,
+      pais: g.pais,
+      comunidad: g.comunidad,
+      provincia: g.provincia,
+      localidad: g.localidad,
+      sinValor: NidoFilter.sinValor,
+    );
+  }
+
+  void _cambiarFondo(MapaFondo f) {
+    _fondoTocado = true;
+    setState(() {
+      _fondo = f;
+      _mapasCache = null;
+    });
+    guardarFondoMapa(AppServices.of(context).db, f);
   }
 
   Future<void> _emitir(Set<String> formatos) async {
@@ -179,8 +232,22 @@ class _InformeTecnicoScreenState extends State<InformeTecnicoScreen> {
     setState(() => _busy = true);
     try {
       _b.mapas = await _generarMapas();
+      _b.fondo = _fondo;
       final doc = InformeTecnico.construir(_b);
       final archivos = <ArchivoExportado>[];
+      if (formatos.contains('pptx')) {
+        final pres = armarPresentacion(
+          _b,
+          ambito: _ambito,
+          sinCoordenadas: widget.nidos.where((n) => !n.tieneCoordenadas).length,
+        );
+        archivos.add(ArchivoExportado(
+          nombre: pres.nombre,
+          mime: mimePptx,
+          ext: 'pptx',
+          bytes: construirPptx(pres),
+        ));
+      }
       if (formatos.contains('pdf')) {
         archivos.add(ArchivoExportado(
           nombre: nombreArchivoInforme(_b.referencia, 'pdf'),
@@ -303,11 +370,28 @@ class _InformeTecnicoScreenState extends State<InformeTecnicoScreen> {
           const SizedBox(height: 8),
           Text('Mapas de localización', style: Theme.of(context).textTheme.titleLarge),
           const Padding(
-            padding: EdgeInsets.only(bottom: 4),
+            padding: EdgeInsets.only(bottom: 8),
             child: Text(
-                'Un mapa por grupo, con los nidos coloreados por resultado. Usa el mapa de OpenStreetMap (necesita conexión; sin ella solo se dibujan los puntos).',
+                'Un mapa por grupo, con los nidos coloreados por resultado y encuadrados en los nidos de la selección. Necesita conexión para descargar el fondo; sin ella solo se dibujan los puntos.',
                 style: TextStyle(fontSize: 12)),
           ),
+          Row(children: [
+            const Text('Fondo: '),
+            const SizedBox(width: 8),
+            Flexible(
+              child: SegmentedButton<MapaFondo>(
+                key: const Key('inf-fondo'),
+                showSelectedIcon: false,
+                segments: [
+                  for (final f in MapaFondo.values)
+                    ButtonSegment(value: f, label: Text(f.etiqueta)),
+                ],
+                selected: {_fondo},
+                onSelectionChanged: (v) => _cambiarFondo(v.first),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 4),
           for (final (clave, etiqueta) in const [
             ('general', 'General (todos los nidos)'),
             ('comunidad', 'Por comunidades autónomas'),
@@ -396,6 +480,13 @@ class _InformeTecnicoScreenState extends State<InformeTecnicoScreen> {
                 icon: const Icon(Icons.description),
                 label: const Text('Word (.doc)'),
               ),
+              if (!widget.individual)
+                FilledButton.tonalIcon(
+                  key: const Key('inf-pptx'),
+                  onPressed: _busy ? null : () => _emitir({'pptx'}),
+                  icon: const Icon(Icons.slideshow),
+                  label: const Text('PowerPoint (.pptx)'),
+                ),
               OutlinedButton.icon(
                 key: const Key('inf-html'),
                 onPressed: _busy ? null : () => _emitir({'html'}),

@@ -23,7 +23,7 @@ class DatabaseService {
   }) : _clock = clock ?? DateTime.now;
 
   static const _dbName = 'aguiluchos.db';
-  static const _dbVersion = 1;
+  static const _dbVersion = 2;
   static const nidosTable = 'nidos';
   static const metaTable = 'sync_meta';
 
@@ -76,6 +76,12 @@ CREATE TABLE $nidosTable (
               'CREATE INDEX idx_nidos_municipio ON $nidosTable(municipio)');
           await db.execute(
               'CREATE TABLE $metaTable (key TEXT PRIMARY KEY, value TEXT)');
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            // v2: campaña como campo propio. Los nidos existentes quedan sin campaña.
+            await db.execute('ALTER TABLE $nidosTable ADD COLUMN campana TEXT');
+          }
         },
       ),
     );
@@ -144,6 +150,18 @@ CREATE TABLE $nidosTable (
           'municipio IN (${List.filled(filter.municipios.length, '?').join(',')})');
       args.addAll(filter.municipios);
     }
+    void valorOpcional(String columna, String? v) {
+      if (v == null) return;
+      if (v == NidoFilter.sinValor) {
+        where.add("($columna IS NULL OR TRIM($columna) = '')");
+      } else {
+        where.add('TRIM($columna) = ?');
+        args.add(v.trim());
+      }
+    }
+
+    valorOpcional('proyecto', filter.proyecto);
+    valorOpcional('campana', filter.campana);
     switch (filter.estado) {
       case EstadoReproductivo.todos:
         break;
@@ -247,6 +265,10 @@ CREATE TABLE $nidosTable (
       ..isSynced = true
       ..hasConflict = conflicto
       ..localImagePaths = existente?.localImagePaths ?? <String>[];
+    // Supabase sin la columna `campana`: no se pierde la campaña guardada aquí.
+    if (remoto.remotoSinCampana && existente != null) {
+      remoto.campana = existente.campana;
+    }
     await _database.insert(nidosTable, remoto.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace);
     _notify();

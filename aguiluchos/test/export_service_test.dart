@@ -52,10 +52,10 @@ void main() {
     expect(sheet.row(3)[1]?.value, isNull);
   });
 
-  test('Excel con las 42 columnas', () {
+  test('Excel con las 43 columnas', () {
     final bytes = export.generarExcel(muestra(), nidoColumns);
     final sheet = xl.Excel.decodeBytes(bytes)['Nidos'];
-    expect(sheet.maxColumns, 42);
+    expect(sheet.maxColumns, 43);
     expect(sheet.maxRows, 4);
   });
 
