@@ -119,6 +119,7 @@ export const MANUAL = [
   <tr><td><b>● En vivo</b></td><td>Conexión en tiempo real: los cambios de la app de campo aparecen al instante. «○ Conectando…» es transitorio. «○ Sin tiempo real» significa que el panel se actualiza solo cada 90 segundos.</td></tr>
   <tr><td><b>Actualizar</b></td><td>Vuelve a leer todos los datos ahora mismo.</td></tr>
   <tr><td><b>Mapa de nidos</b></td><td>Salta a la vista de mapa con los nidos filtrados. Ver ${enl('mapa', 'mapa')}.</td></tr>
+  <tr><td><b>Presentación</b></td><td>Descarga un PowerPoint (.pptx) con los nidos filtrados. Ver ${enl('presentacion', 'Presentación')}.</td></tr>
   <tr><td><b>Exportar CSV</b></td><td>Descarga los nidos filtrados. Ver ${enl('csv', 'exportar CSV')}.</td></tr>
   <tr><td><b>Informes</b></td><td>Emite informes técnicos editables. Ver ${enl('informes', 'informes')}.</td></tr>
   <tr><td><b>Contratos</b></td><td>Abre parcelas, propietarios, convenios, compensación y ayudas. Ver ${enl('contratos', 'contratos')}.</td></tr>
@@ -199,6 +200,11 @@ export const MANUAL = [
   <li>Un nido que ya existe (misma numeración o etiqueta, con proyecto y campaña compatibles) solo se completa con las celdas que traen valor.</li>
   <li>La campaña necesita haber ejecutado <code>migracion_campana.sql</code> en Supabase.</li>
 </ul>`,
+  },
+  {
+    id: 'presentacion', grupo: 'nidos', titulo: 'Presentación PowerPoint',
+    html: `
+<p>El botón <b>Presentación</b> (junto a <b>Informes</b>) descarga un <code>.pptx</code> con la selección actual de nidos (mismos filtros que el informe): portada con el ámbito, totales, mapa y tabla de nidos. Las celdas sin dato quedan en blanco. Abre en PowerPoint y se puede importar a Google Slides desde Drive.</p>`,
   },
   {
     id: 'csv', grupo: 'nidos', titulo: 'Exportar a CSV (Excel)',

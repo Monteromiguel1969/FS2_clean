@@ -8,6 +8,7 @@ import {
 } from './api.js';
 import { FASES, ESPECIES } from './columns.js';
 import { abrirExportarCsvUI } from './exportar_ui.js';
+import { crearPresentacionUI } from './presentacion_ui.js';
 import { FONDOS, guardarFondo, htmlSelectorFondo, leerFondo } from './fondo.js';
 import { abrirImportarUI } from './importar_ui.js';
 import { opcionesCascada } from './geo.js';
@@ -282,6 +283,7 @@ function pintarPanel() {
       <button class="btn" id="btn-importar" title="Importar nidos desde un Excel (.xlsx): cabeceras en la primera fila">Importar Excel</button>
       <input type="file" id="archivo-excel" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
       <button class="btn" id="btn-informes" title="Emitir informes técnicos editables (PDF / Word)">Informes</button>
+      <button class="btn" id="btn-presentacion" title="Descargar una presentación PowerPoint (.pptx) con los nidos filtrados">Presentación</button>
       <button class="btn" id="btn-contratos" title="Parcelas, propietarios y convenios firmados">Contratos</button>
       <button class="btn primario" id="btn-nuevo">+ Nuevo nido</button>
       <button class="btn" id="btn-ayuda" data-ayuda="inicio" title="Manual de ayuda (tecla F1)">Ayuda</button>
@@ -315,6 +317,7 @@ function pintarPanel() {
     if (archivo) importarExcel(archivo);
   };
   document.getElementById('btn-informes').onclick = () => abrirInformes();
+  document.getElementById('btn-presentacion').onclick = presentacion;
   document.getElementById('btn-contratos').onclick = () => estado.contratos.abrir();
   document.getElementById('btn-mapa').onclick = () => {
     estado.vista = 'mapa';
@@ -735,6 +738,27 @@ function describirFiltros() {
     f.estado && `estado: ${f.estado}`,
     f.contrato && `contrato: ${FILTROS_CONTRATO[f.contrato]}`,
   ].filter(Boolean).join('; ');
+}
+
+async function presentacion() {
+  const boton = document.getElementById('btn-presentacion');
+  const msg = document.getElementById('estado-carga');
+  boton.disabled = true;
+  try {
+    await crearPresentacionUI({
+      lista: visibles(),
+      geo: estado.filtro,
+      filtros: describirFiltros(),
+      fondo: estado.fondo,
+      aviso: (t) => { msg.textContent = t; },
+    });
+  } catch (e) {
+    msg.textContent = `No se pudo crear la presentación: ${e.message ?? e}`;
+    return;
+  } finally {
+    boton.disabled = false;
+  }
+  setTimeout(() => { if (msg.isConnected) actualizarCabecera(); }, 6000);
 }
 
 function abrirInformes(op = {}) {
