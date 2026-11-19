@@ -1,19 +1,13 @@
-// Armado de datos de la presentación (sin DOM ni librerías): lo que se pinta en las
-// diapositivas sale de aquí para poder probarlo. Mismo conjunto de nidos que el informe.
-import { SIN_VALOR, estadoReproductivo, resumen } from './logic.js';
+// Datos de la presentación: los nidos filtrados (los mismos del informe) listos para
+// incrustarlos en el cuaderno de Colab. Sin DOM ni red: se prueba en node.
+// No se incluyen datos personales (propietario, teléfono, referencia catastral).
+import { SIN_VALOR, estadoReproductivo, posicion } from './logic.js';
 import { tituloMapaGeneral } from './mapa_img.js';
-
-export const FILAS_POR_DIAPOSITIVA = 11;
-
-const COLUMNAS_TABLA = [
-  ['numeracion', 'Nº'], ['etiqueta', 'Etiqueta'], ['proyecto', 'Proyecto'], ['campana', 'Campaña'],
-  ['municipio', 'Localidad'], ['provincia', 'Provincia'], ['especie', 'Especie'], ['estado', 'Estado'],
-  ['num_pollos_nacidos', 'Nacidos'], ['num_pollos_volados', 'Volados'], ['num_pollos_muertos', 'Muertos'],
-];
-const OPCIONALES = new Set(['proyecto', 'campana']);
+import { FONDOS, FONDO_DEFECTO } from './fondo.js';
 
 const vacio = (v) => v == null || String(v).trim() === '';
-const celda = (v) => (vacio(v) ? '' : String(v).trim());
+const texto = (v) => (vacio(v) ? null : String(v).trim());
+const entero = (v) => (vacio(v) || !Number.isFinite(Number(v)) ? null : Number(v));
 
 export const formatoFecha = (d) =>
   `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
@@ -28,43 +22,44 @@ export function ambitoDelFiltro(f = {}) {
   return partes.length ? partes.join(' · ') : 'Todos los nidos';
 }
 
-export function nombreArchivoPresentacion(fecha = new Date()) {
-  return `presentacion_aguiluchos_${fecha.toISOString().slice(0, 10)}.pptx`;
-}
+export const nombrePptx = (fecha = new Date()) => `presentacion_aguiluchos_${fecha.toISOString().slice(0, 10)}.pptx`;
+export const nombreCuaderno = (fecha = new Date()) => `presentacion_aguiluchos_${fecha.toISOString().slice(0, 10)}.ipynb`;
+
+const urlsPublicas = (v) => (Array.isArray(v) ? v : []).filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u.trim())).map((u) => u.trim());
 
 /**
- * @param {object[]} lista nidos filtrados (los mismos que entran en el informe)
- * @param {{geo?:object, filtros?:string, fecha?:Date, mapaDataUrl?:string|null, filasPorDiapositiva?:number}} op
+ * @param {object[]} lista nidos filtrados (visibles(), igual que el informe)
+ * @param {{geo?:object, filtros?:string, fecha?:Date, fondo?:string}} op
  */
-export function armarPresentacion(lista, op = {}) {
-  const { geo = {}, filtros = '', fecha = new Date(), mapaDataUrl = null, filasPorDiapositiva = FILAS_POR_DIAPOSITIVA } = op;
-  const r = resumen(lista);
-  const ambito = ambitoDelFiltro(geo);
-  const tasa = r.tasaExito == null ? '—' : `${Math.round(r.tasaExito * 100)} %`;
-
-  const columnas = COLUMNAS_TABLA.filter(([k]) => !OPCIONALES.has(k) || lista.some((n) => !vacio(n[k])));
-  const filas = lista.map((n) => columnas.map(([k]) => (k === 'estado' ? estadoReproductivo(n) : celda(n[k]))));
-  const paginas = [];
-  for (let i = 0; i < filas.length; i += filasPorDiapositiva) paginas.push(filas.slice(i, i + filasPorDiapositiva));
-
+export function armarDatosCuaderno(lista, op = {}) {
+  const { geo = {}, filtros = '', fecha = new Date(), fondo = FONDO_DEFECTO } = op;
+  const f = FONDOS[fondo] ?? FONDOS[FONDO_DEFECTO];
   return {
-    titulo: 'Seguimiento reproductor · Campaña Aguilucho',
-    ambito,
+    ambito: ambitoDelFiltro(geo),
     filtros,
     fecha: formatoFecha(fecha),
-    total: lista.length,
-    totales: [
-      { etiqueta: 'Nidos', valor: String(r.total) },
-      { etiqueta: 'Con éxito', valor: String(r.exito) },
-      { etiqueta: 'Fracaso', valor: String(r.fracaso) },
-      { etiqueta: 'En curso', valor: String(r.enCurso) },
-      { etiqueta: 'Tasa de éxito (cerrados)', valor: tasa },
-      { etiqueta: 'Pollos nacidos', valor: String(r.nacidos) },
-      { etiqueta: 'Pollos volados', valor: String(r.volados) },
-      { etiqueta: 'Pollos muertos', valor: String(r.muertos) },
-    ],
-    causas: r.causas.slice(0, 5),
-    mapa: mapaDataUrl ? { dataUrl: mapaDataUrl } : null,
-    tabla: { columnas: columnas.map(([, l]) => l), paginas },
+    nombre_pptx: nombrePptx(fecha),
+    fondo: { id: f.id, nombre: f.etiqueta, plantilla: f.plantilla, atribucion: f.atribucion },
+    nidos: lista.map((n) => {
+      const p = posicion(n);
+      return {
+        numeracion: texto(n.numeracion),
+        etiqueta: texto(n.etiqueta),
+        proyecto: texto(n.proyecto),
+        campana: texto(n.campana),
+        municipio: texto(n.municipio),
+        provincia: texto(n.provincia),
+        especie: texto(n.especie),
+        estado: estadoReproductivo(n),
+        estado_final: texto(n.estado_final),
+        causas_fracaso: texto(n.causas_fracaso),
+        nacidos: entero(n.num_pollos_nacidos),
+        volados: entero(n.num_pollos_volados),
+        muertos: entero(n.num_pollos_muertos),
+        lat: p ? Number(p.lat.toFixed(6)) : null,
+        lon: p ? Number(p.lon.toFixed(6)) : null,
+        imagenes: urlsPublicas(n.imagenes_urls),
+      };
+    }),
   };
 }
