@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import JSZip from 'jszip';
-import { ambitoDelFiltro, armarDatosCuaderno, armarPresentacion, formatoFecha, nombreCuaderno, nombrePptx } from '../src/presentacion.js';
+import { ambitoDelFiltro, armarDatosCuaderno, armarPresentacion, candidatasFotos, formatoFecha, nombreCuaderno, nombrePptx, trocearTexto } from '../src/presentacion.js';
+import { SECCIONES } from '../src/informe.js';
 import { construirPptx, encajar } from '../src/presentacion_pptx.js';
 import { cargarFotos } from '../src/presentacion_ui.js';
 import { construirCuaderno, literalPython, serializarCuaderno } from '../src/cuaderno.js';
@@ -97,56 +98,158 @@ test('el código Python de todas las celdas es sintácticamente válido', (t) =>
   assert.equal(r.status, 0, r.stderr);
 });
 
-test('presentación: totales, gráficos con datos, imágenes públicas y celdas vacías en blanco', () => {
-  const d = armarPresentacion(lista, { geo: { campana: '2026', provincia: 'Zamora' }, filtros: 'provincia: Zamora', fecha: new Date(2026, 10, 19), fondo: 'ortofoto' });
-  assert.equal(d.ambito, 'Campaña 2026 · Provincia: Zamora');
-  assert.equal(d.nombre, 'presentacion_aguiluchos_2026-11-19.pptx');
-  assert.equal(d.fondo.id, 'ortofoto');
-  const t = Object.fromEntries(d.totales.map((x) => [x.etiqueta, x.valor]));
-  assert.deepEqual([t.Nidos, t['Con éxito'], t.Fracaso, t['En curso'], t['Tasa de éxito (cerrados)'], t['Pollos nacidos'], t['Pollos volados'], t['Pollos muertos']], ['3', '1', '1', '1', '50 %', '6', '3', '1']);
-  assert.deepEqual(d.graficos.estados.values, [1, 1, 1]);
-  assert.deepEqual(d.graficos.estados.labels, ['Éxito (1)', 'Fracaso (1)', 'En curso (1)']);
-  assert.deepEqual(d.graficos.tasas.values, [50]);
-  assert.deepEqual(d.graficos.pollos.series.map((s) => [s.name, s.values]), [['Nacidos', [6]], ['Volados', [3]], ['Muertos', [1]]]);
-  assert.deepEqual(d.graficos.causas.labels, ['Depredación']);
-  assert.equal(d.conCoordenadas, 1);
-  assert.deepEqual(d.imagenes.map((i) => i.url), ['https://x.test/a.jpg']);
-  const [f1, f2, f3] = d.tabla.paginas[0];
-  assert.deepEqual(f1, ['1', 'E1', 'Aguilucho', '2026', 'Toro', 'Zamora', 'Aguilucho cenizo', 'Éxito', '4', '3', '1']);
-  assert.deepEqual(f2.slice(8), ['2', '', '']);
-  assert.equal(f3[4], '');
-  assert.equal(f3[6], '');
-  assert.ok(!JSON.stringify(d).match(/Persona Privada|600000000|REF-SECRETA/));
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const OP = { fecha: new Date(2026, 10, 19), geo: { campana: '2026', provincia: 'Zamora' }, filtros: 'provincia: Zamora; campaña: 2026', autor: 'Ana', cargo: 'Técnica', destinatario: 'Junta', referencia: 'REF-1' };
+const titulos = (m) => m.diapositivas.map((d) => d.titulo);
+const SIN_PERSONALES = /Persona Privada|600000000|REF-SECRETA/;
+
+test('presentación: las secciones disponibles son las del informe (misma lista)', () => {
+  const m = armarPresentacion(lista, { ...OP, secciones: SECCIONES.map((x) => x.id) });
+  const t = titulos(m).join('\n');
+  for (const s of ['Objeto y alcance', 'Resumen ejecutivo', 'Resultados por especie', 'Resultados por comunidad autónoma', 'Resultados por provincia', 'Resultados por localidad',
+    'Causas de fracaso', 'Intervenciones de conservación', 'Relación de nidos y justificaciones', 'Observaciones y conclusiones', 'Ficha técnica']) {
+    assert.ok(t.includes(s), s);
+  }
 });
 
-test('presentación: gráficos solo si hay datos; tasa por campaña con varias campañas; pagina y filtra como el informe', () => {
-  const sinDatos = armarPresentacion([nido(1), nido(2)], {});
-  assert.equal(sinDatos.graficos.tasas, null);
-  assert.equal(sinDatos.graficos.pollos, null);
-  assert.equal(sinDatos.graficos.causas, null);
-  assert.deepEqual(sinDatos.graficos.estados.values, [2]);
-  const muchos = Array.from({ length: 25 }, (_, i) => nido(i + 1, { campana: i < 10 ? '2025' : '2026', resultado_reproductivo: i % 2 ? 'Éxito' : 'Fracaso' }));
-  const todas = armarPresentacion(muchos, {});
-  assert.match(todas.graficos.tasas.titulo, /por campaña/);
-  assert.equal(todas.graficos.tasas.labels.length, 2);
-  const sel = filtrar(muchos, { texto: '', campana: '2026' });
-  const d = armarPresentacion(sel, { geo: { campana: '2026' } });
-  assert.equal(d.total, 15);
-  assert.deepEqual(d.tabla.paginas.map((p) => p.length), [11, 4]);
-  assert.ok(!d.tabla.columnas.includes('Proyecto'));
-  assert.ok(d.tabla.columnas.includes('Campaña'));
-  const vacio = armarPresentacion([], {});
-  assert.equal(vacio.total, 0);
-  assert.deepEqual(vacio.tabla.paginas, []);
+test('presentación: solo lleva lo marcado y numera las secciones', () => {
+  const m = armarPresentacion(lista, { ...OP, secciones: ['resumen', 'causas'] });
+  assert.deepEqual(titulos(m), [
+    '1. Resumen ejecutivo', '1. Resumen ejecutivo · Resultado de la nidificación', '1. Resumen ejecutivo · Pollos nacidos, volados y muertos',
+    '2. Causas de fracaso', '2. Causas de fracaso · Gráfico',
+  ]);
+  assert.equal(m.diapositivas.some((d) => d.tipo === 'mapa' || d.tipo === 'ficha'), false);
+  const sin = armarPresentacion(lista, { ...OP, secciones: [] });
+  assert.deepEqual(sin.diapositivas, []);
+  const defecto = armarPresentacion(lista, OP);
+  assert.ok(!titulos(defecto).some((x) => x.includes('Ficha técnica')));
 });
 
-test('fotos: se descargan solo las que cargan, con tope, y se abandona si las primeras fallan', async () => {
-  const c = Array.from({ length: 6 }, (_, i) => ({ url: `u${i}`, titulo: `T${i}`, subtitulo: '' }));
-  const f = await cargarFotos(c, async (u) => (u === 'u1' || u === 'u3' ? null : { dataUrl: `d-${u}`, w: 10, h: 5 }), 3);
-  assert.deepEqual(f.map((x) => x.titulo), ['T0', 'T2', 'T4']);
+test('presentación: portada con título, referencia, destinatario, autor, cargo, ámbito y recuento', () => {
+  const m = armarPresentacion(lista, { ...OP, titulo: 'Mi título' });
+  assert.equal(m.titulo, 'Mi título');
+  assert.equal(m.referencia, 'REF-1');
+  assert.equal(m.destinatario, 'Junta');
+  assert.equal(m.elaboradoPor, 'Ana · Técnica');
+  assert.equal(m.fecha, '19 de noviembre de 2026');
+  assert.equal(m.ambito, 'Campaña 2026 · Provincia: Zamora');
+  assert.equal(m.filtros, 'provincia: Zamora; campaña: 2026');
+  assert.equal(m.total, 3);
+  assert.equal(m.nombre, 'presentacion_aguiluchos_2026-11-19.pptx');
+  const vacia = armarPresentacion(lista, { fecha: OP.fecha });
+  assert.equal(vacia.destinatario, '');
+  assert.equal(vacia.elaboradoPor, '');
+  assert.match(vacia.titulo, /^Presentación de seguimiento reproductor · Campaña Aguilucho 2026$/);
+  assert.match(vacia.referencia, /^GREFA-AGU-2026-1119-/);
+});
+
+test('presentación: indicadores, gráficos y causas salen de los nidos incluidos', () => {
+  const m = armarPresentacion(lista, { ...OP, secciones: ['resumen', 'causas'] });
+  const kpis = Object.fromEntries(m.diapositivas[0].items.map((x) => [x.etiqueta, x.valor]));
+  assert.deepEqual([kpis['Nidos analizados'], kpis['Nidos con éxito'], kpis['Nidos fracasados'], kpis['Nidos en curso'], kpis['Tasa de éxito'], kpis['Pollos nacidos'], kpis['Pollos volados'], kpis['Pollos muertos']],
+    ['3', '1', '1', '1', '50 %', '6', '3', '1']);
+  const [, estados, pollos] = m.diapositivas;
+  assert.deepEqual(estados.series[0].values, [1, 1, 1]);
+  assert.deepEqual(pollos.series.map((x) => [x.name, x.values]), [['Nacidos', [6]], ['Volados', [3]], ['Muertos', [1]]]);
+  const causas = m.diapositivas.find((d) => d.tipo === 'tabla');
+  assert.deepEqual(causas.filas, [['Depredación', '1', '100 %']]);
+  const sinFracasos = armarPresentacion([lista[0]], { ...OP, secciones: ['causas'] });
+  assert.equal(sinFracasos.diapositivas[0].tipo, 'texto');
+  assert.match(sinFracasos.diapositivas[0].texto, /No constan nidos fracasados/);
+});
+
+test('presentación: tasa de éxito por campaña cuando hay varias; pollos solo si hay datos', () => {
+  const muchos = Array.from({ length: 12 }, (_, i) => nido(i + 1, { campana: i < 6 ? '2025' : '2026', resultado_reproductivo: i % 2 ? 'Éxito' : 'Fracaso' }));
+  const m = armarPresentacion(muchos, { ...OP, secciones: ['resumen'] });
+  const tasas = m.diapositivas.find((d) => d.titulo.includes('Tasa de éxito por campaña'));
+  assert.deepEqual(tasas.labels, ['2025 (n=6)', '2026 (n=6)']);
+  assert.equal(m.diapositivas.some((d) => d.titulo.includes('Pollos nacidos, volados')), false);
+});
+
+test('presentación: tablas por especie, comunidad, provincia y localidad con los totales del informe', () => {
+  const m = armarPresentacion(lista, { ...OP, secciones: ['especies', 'provincias', 'municipios'] });
+  const [esp, prov, loc] = m.diapositivas;
+  assert.deepEqual(esp.columnas.map((c) => c.t), ['Especie', 'Nidos', 'Éxito', 'Fracaso', 'En curso', 'Tasa éxito', 'Nacidos', 'Volados', 'Muertos']);
+  assert.deepEqual(esp.filas[0], ['Aguilucho cenizo', '2', '1', '1', '0', '50 %', '6', '3', '1']);
+  assert.deepEqual(esp.filas[1].slice(0, 2), ['Sin indicar', '1']);
+  assert.equal(prov.filas[0][0], 'Zamora');
+  assert.deepEqual(loc.filas.map((f) => f[0]).sort(), ['Sin indicar', 'Toro']);
+});
+
+test('presentación: celdas vacías en blanco en la relación e intervenciones, y paginación', () => {
+  const muchos = Array.from({ length: 20 }, (_, i) => nido(i + 1, i === 4 ? { intervencion: true, tipo_acciones_manejo: ['Dron'], observaciones_i: 'Nota' } : {}));
+  const m = armarPresentacion(muchos, { ...OP, secciones: ['relacion', 'intervenciones'] });
+  const rel = m.diapositivas.filter((d) => d.titulo.includes('Relación'));
+  assert.deepEqual(rel.map((d) => d.filas.length), [8, 8, 4]);
+  assert.match(rel[0].titulo, /\(1\/3\)/);
+  assert.deepEqual(rel[0].filas[0], ['1', 'E1', 'Toro', 'Aguilucho cenizo', '', '', '', '', 'En curso', '']);
+  const inter = m.diapositivas.find((d) => d.titulo.includes('Intervenciones'));
+  assert.deepEqual(inter.filas, [['E5', 'Toro', 'Dron', 'En curso', 'Nota']]);
+  const ninguna = armarPresentacion(lista, { ...OP, secciones: ['intervenciones'] });
+  assert.match(ninguna.diapositivas[0].texto, /No constan intervenciones/);
+});
+
+test('presentación: mapas marcados, ordenados por nivel, con su título y dimensiones', () => {
+  const mapas = [
+    { nivel: 'provincia', titulo: 'Zamora', n: 2, dataUrl: PNG, ancho: 896, alto: 528 },
+    { nivel: 'general', titulo: 'Provincia: Zamora', n: 2, dataUrl: PNG, ancho: 1216, alto: 640 },
+  ];
+  const m = armarPresentacion(lista, { ...OP, secciones: ['resumen'], mapas, sinCoordenadas: 1 });
+  const ms = m.diapositivas.filter((d) => d.tipo === 'mapa');
+  assert.deepEqual(ms.map((d) => d.titulo), ['2. Mapas de localización · General', '2. Mapas de localización · Provincia: Zamora']);
+  assert.deepEqual([ms[0].w, ms[0].h], [1216, 640]);
+  assert.match(ms[0].pie, /fondo: Mapa.*1 nido\(s\) sin coordenadas/);
+  assert.equal(armarPresentacion(lista, { ...OP, secciones: ['resumen'] }).diapositivas.some((d) => d.tipo === 'mapa'), false);
+  const orto = armarPresentacion(lista, { ...OP, secciones: [], mapas, fondo: 'ortofoto' });
+  assert.match(orto.diapositivas[0].pie, /fondo: Ortofoto/);
+});
+
+test('presentación: observaciones editables y troceadas en varias diapositivas', () => {
+  const m = armarPresentacion(lista, { ...OP, secciones: ['conclusiones'], observaciones: 'Texto editado por la persona.\nSegundo párrafo.' });
+  assert.equal(m.diapositivas.length, 1);
+  assert.equal(m.diapositivas[0].texto, 'Texto editado por la persona.\nSegundo párrafo.');
+  const largo = Array.from({ length: 10 }, (_, i) => `Párrafo ${i} ${'x'.repeat(300)}.`).join('\n');
+  const t = trocearTexto(largo, 900);
+  assert.ok(t.length >= 3 && t.every((x) => x.length <= 1000));
+  assert.equal(t.join('\n').split('\n').length, 10);
+  const una = trocearTexto(`${'Frase larga número uno. '.repeat(80)}`, 900);
+  assert.ok(una.length >= 2 && una.every((x) => x.length <= 900));
+  const por = armarPresentacion(lista, { ...OP, secciones: ['conclusiones'] });
+  assert.match(por.diapositivas[0].texto, /De los 3 nido\(s\) analizados/);
+  const vacio = armarPresentacion(lista, { ...OP, secciones: ['conclusiones'], observaciones: '' });
+  assert.equal(vacio.diapositivas[0].texto, '');
+});
+
+test('presentación: ficha técnica por nido (2 diapositivas), vacíos en blanco, sin datos personales y con foto si hay', () => {
+  const fotos = new Map([[lista[0], { dataUrl: PNG, w: 4, h: 3 }]]);
+  const m = armarPresentacion(lista, { ...OP, secciones: ['fichas'], fotos });
+  const f = m.diapositivas;
+  assert.equal(f.length, 6);
+  assert.equal(f[0].titulo, 'Ficha técnica · E1 · Éxito (1/2)');
+  const fase1 = f[0].izquierda[0];
+  assert.ok(!fase1.filas.some(([k]) => /Propietario|Teléfono|catastral/.test(k)));
+  assert.deepEqual(fase1.filas.find(([k]) => k === 'Especie'), ['Especie', 'Aguilucho cenizo']);
+  assert.deepEqual(fase1.filas.find(([k]) => k === 'Proyecto'), ['Proyecto', 'Aguilucho']);
+  assert.deepEqual(fase1.filas.find(([k]) => k === 'Territorio'), ['Territorio', '']);
+  assert.equal(f[1].foto.w, 4);
+  assert.equal(f[3].foto, null);
+  assert.ok(!SIN_PERSONALES.test(JSON.stringify(m)));
+});
+
+test('presentación: ningún dato personal en ninguna sección', () => {
+  const m = armarPresentacion(lista, { ...OP, secciones: SECCIONES.map((x) => x.id) });
+  assert.ok(!SIN_PERSONALES.test(JSON.stringify(m)));
+});
+
+test('fotos: candidatas públicas por nido y descarga con tope y abandono si las primeras fallan', async () => {
+  const c = candidatasFotos(lista);
+  assert.deepEqual(c.map((x) => [x.url, x.titulo]), [['https://x.test/a.jpg', 'Nido E1']]);
+  const cand = Array.from({ length: 6 }, (_, i) => ({ nido: { i }, url: `u${i}` }));
+  const f = await cargarFotos(cand, async (u) => (u === 'u1' || u === 'u3' ? null : { dataUrl: u, w: 10, h: 5 }), 3);
+  assert.deepEqual([...f.values()].map((x) => x.dataUrl), ['u0', 'u2', 'u4']);
   let intentos = 0;
-  const nada = await cargarFotos(Array.from({ length: 40 }, (_, i) => ({ url: `x${i}` })), async () => { intentos += 1; return null; });
-  assert.equal(nada.length, 0);
+  const nada = await cargarFotos(Array.from({ length: 40 }, (_, i) => ({ nido: { i }, url: `x${i}` })), async () => { intentos += 1; return null; });
+  assert.equal(nada.size, 0);
   assert.equal(intentos, 8);
 });
 
@@ -155,23 +258,38 @@ test('encajar centra la imagen en la caja sin deformarla', () => {
   assert.deepEqual([r.w, r.h, r.x, r.y], [10, 5, 0, 2.5]);
 });
 
-test('el .pptx se genera en el cliente: zip válido con portada, totales, gráficos nativos, mapa, fotos y tabla', async () => {
-  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-  const d = armarPresentacion(lista, { geo: { campana: '2026' }, fecha: new Date(2026, 10, 19) });
-  const pres = await construirPptx(d, { mapa: { dataUrl: png, w: 1200, h: 620, pie: 'pie' }, imagenes: [{ dataUrl: png, w: 4, h: 3, titulo: 'Nido E1', subtitulo: 'Zamora' }] });
+async function leerPptx(modelo) {
+  const pres = await construirPptx(modelo);
   const buf = await pres.write({ outputType: 'nodebuffer' });
   assert.equal(buf.subarray(0, 2).toString(), 'PK');
   const zip = await JSZip.loadAsync(buf);
   const nombres = Object.keys(zip.files);
   const slides = nombres.filter((f) => /^ppt\/slides\/slide\d+\.xml$/.test(f));
-  assert.equal(slides.length, 1 + 1 + 4 + 1 + 1 + 1);
-  assert.ok(nombres.filter((f) => /^ppt\/charts\/chart\d+\.xml$/.test(f)).length >= 4);
+  const xml = (await Promise.all(slides.map((f) => zip.file(f).async('string')))).join('\n');
+  return { nombres, slides, xml };
+}
+
+test('el .pptx se genera en el cliente con todo lo marcado: portada, gráficos nativos, mapas, tablas y fichas con foto', async () => {
+  const mapas = [{ nivel: 'general', titulo: 'Zamora', n: 2, dataUrl: PNG, ancho: 1216, alto: 640 }];
+  const fotos = new Map([[lista[0], { dataUrl: PNG, w: 4, h: 3 }]]);
+  const m = armarPresentacion(lista, { ...OP, secciones: SECCIONES.map((x) => x.id), mapas, fotos });
+  const { nombres, slides, xml } = await leerPptx(m);
+  assert.equal(slides.length, 1 + m.diapositivas.length);
+  assert.ok(nombres.filter((f) => /^ppt\/charts\/chart\d+\.xml$/.test(f)).length >= 3);
   assert.ok(nombres.some((f) => f.startsWith('ppt/media/')));
-  const todo = (await Promise.all(slides.map((f) => zip.file(f).async('string')))).join('\n');
-  assert.match(todo, /Campaña 2026/);
-  assert.match(todo, /Tasa de éxito/);
-  assert.match(todo, /<a:tbl>/);
-  assert.ok(!todo.match(/Persona Privada|600000000|REF-SECRETA/));
-  const sinNada = await construirPptx(armarPresentacion([], {}), {});
-  assert.equal(Object.keys((await JSZip.loadAsync(await sinNada.write({ outputType: 'nodebuffer' }))).files).filter((f) => /^ppt\/slides\/slide\d+\.xml$/.test(f)).length, 3);
+  assert.match(xml, /REF-1/);
+  assert.match(xml, /Ana · Técnica/);
+  assert.match(xml, /<a:tbl>/);
+  assert.match(xml, /Ficha técnica · E1/);
+  assert.ok(!SIN_PERSONALES.test(xml));
+});
+
+test('el .pptx solo lleva las secciones marcadas (portada + una)', async () => {
+  const m = armarPresentacion(lista, { ...OP, secciones: ['alcance'] });
+  const { slides, xml, nombres } = await leerPptx(m);
+  assert.equal(slides.length, 2);
+  assert.match(xml, /1\. Objeto y alcance/);
+  assert.equal(nombres.filter((f) => /^ppt\/charts\/chart\d+\.xml$/.test(f)).length, 0);
+  const nada = await leerPptx(armarPresentacion([], { ...OP, secciones: SECCIONES.map((x) => x.id) }));
+  assert.ok(nada.slides.length >= 2);
 });

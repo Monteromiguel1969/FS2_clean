@@ -8,7 +8,6 @@ import {
 } from './api.js';
 import { FASES, ESPECIES } from './columns.js';
 import { abrirExportarCsvUI } from './exportar_ui.js';
-import { crearPresentacionUI } from './presentacion_ui.js';
 import { FONDOS, guardarFondo, htmlSelectorFondo, leerFondo } from './fondo.js';
 import { abrirImportarUI } from './importar_ui.js';
 import { opcionesCascada } from './geo.js';
@@ -740,25 +739,17 @@ function describirFiltros() {
   ].filter(Boolean).join('; ');
 }
 
-async function presentacion() {
-  const boton = document.getElementById('btn-presentacion');
-  const msg = document.getElementById('estado-carga');
-  boton.disabled = true;
-  try {
-    await crearPresentacionUI({
-      lista: visibles(),
-      geo: estado.filtro,
-      filtros: describirFiltros(),
-      fondo: estado.fondo,
-      aviso: (t) => { msg.textContent = t; },
-    });
-  } catch (e) {
-    msg.textContent = `No se pudo crear la presentación: ${e.message ?? e}`;
-    return;
-  } finally {
-    boton.disabled = false;
-  }
-  setTimeout(() => { if (msg.isConnected) actualizarCabecera(); }, 6000);
+function presentacion() {
+  abrirInformesUI({
+    dlg: document.getElementById('dlg-informe'),
+    seleccion: visibles(),
+    todos: estado.nidos,
+    filtros: describirFiltros(),
+    geo: estado.filtro,
+    alCambiarFondo: aplicarFondo,
+    email: estado.sesion?.user?.email ?? '',
+    formato: 'pptx',
+  });
 }
 
 function abrirInformes(op = {}) {

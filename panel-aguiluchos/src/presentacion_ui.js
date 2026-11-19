@@ -1,9 +1,12 @@
-import { puntosDe, renderMapa } from './mapa_img.js';
-import { MAX_IMAGENES, armarPresentacion } from './presentacion.js';
+import { agruparPorNivel } from './geo.js';
+import { posicion } from './logic.js';
+import { generarMapas, tituloMapaGeneral } from './mapa_img.js';
+import { MAX_FOTOS, armarPresentacion, candidatasFotos } from './presentacion.js';
 import { descargarPptx } from './presentacion_pptx.js';
 
 const TIEMPO_FOTO_MS = 6000;
 const LADO_MAX_FOTO = 1600;
+const ESCALA_MAPA = 1.6;
 
 /** Descarga una foto pública y la reduce a JPEG; null si no se puede (CORS, 404, no es imagen…). */
 async function cargarFoto(url) {
@@ -28,46 +31,41 @@ async function cargarFoto(url) {
   }
 }
 
-/** Fotos públicas de los nidos; deja de insistir si las primeras no se pueden descargar. */
-export async function cargarFotos(candidatas, cargar = cargarFoto, maximo = MAX_IMAGENES) {
-  const res = [];
+/** Fotos públicas (clave: el nido); deja de insistir si las primeras no se pueden descargar. */
+export async function cargarFotos(candidatas, cargar = cargarFoto, maximo = MAX_FOTOS) {
+  const res = new Map();
   let fallos = 0;
   for (const c of candidatas) {
-    if (res.length >= maximo || (fallos >= 8 && !res.length)) break;
+    if (res.size >= maximo || (fallos >= 8 && !res.size)) break;
     const f = await cargar(c.url);
-    if (f) res.push({ ...f, titulo: c.titulo, subtitulo: c.subtitulo });
+    if (f) res.set(c.nido, f);
     else fallos += 1;
   }
   return res;
 }
 
 /**
- * Presentación PowerPoint con los nidos filtrados (visibles(), igual que el informe),
- * generada y descargada en el navegador. `ctx`: { lista, geo, filtros, fondo, aviso(texto) }.
+ * Genera y descarga el .pptx con lo marcado en el diálogo (igual que el informe).
+ * @param {{lista:object[], opciones:object, secciones:string[], niveles:object, fondo:string, geo?:object, tituloGeneral?:string, aviso:(t:string)=>void}} p
  */
-export async function crearPresentacionUI({ lista, geo, filtros, fondo, aviso }) {
-  if (!lista.length) { aviso('No hay nidos en la selección actual para crear la presentación.'); return; }
-  const datos = armarPresentacion(lista, { geo, filtros, fondo });
-
-  let mapa = null;
-  const puntos = puntosDe(lista);
-  if (puntos.length) {
-    aviso('Preparando el mapa…');
-    try {
-      const ancho = 1200;
-      const alto = 620;
-      const dataUrl = await renderMapa(puntos, { ancho, alto, fondo, etiquetar: puntos.length <= 14 });
-      if (dataUrl) mapa = { dataUrl, w: ancho, h: alto, pie: `${puntos.length} nidos con coordenadas · fondo: ${datos.fondo.nombre} · verde = éxito, rojo = fracaso, naranja = en curso` };
-    } catch {
-      mapa = null;
+export async function crearPresentacionUI({ lista, opciones, secciones, niveles, fondo, tituloGeneral, aviso }) {
+  let mapas = [];
+  if (Object.values(niveles).some(Boolean)) {
+    mapas = await generarMapas(lista, niveles, agruparPorNivel, (h, t) => aviso(`Generando mapas de localización (${h}/${t})…`), tituloGeneral ?? tituloMapaGeneral(opciones.geo), fondo, ESCALA_MAPA);
+  }
+  let fotos = new Map();
+  if (secciones.includes('fichas')) {
+    const candidatas = candidatasFotos(lista);
+    if (candidatas.length) {
+      aviso('Descargando imágenes de los nidos…');
+      fotos = await cargarFotos(candidatas);
     }
   }
-  let imagenes = [];
-  if (datos.imagenes.length) {
-    aviso('Descargando imágenes de los nidos…');
-    imagenes = await cargarFotos(datos.imagenes);
-  }
   aviso('Creando la presentación…');
-  const nombre = await descargarPptx(datos, { mapa, imagenes });
+  const modelo = armarPresentacion(lista, {
+    ...opciones, secciones, mapas, fotos, fondo,
+    sinCoordenadas: lista.filter((n) => !posicion(n)).length,
+  });
+  const nombre = await descargarPptx(modelo);
   aviso(`Presentación descargada: ${nombre}`);
 }

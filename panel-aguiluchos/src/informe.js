@@ -31,8 +31,8 @@ export function fechaCorta(d) {
 }
 export const fechaLarga = (d) => `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
 
-const pct = (v, dec = 0) => (v == null || Number.isNaN(v) ? 'n/d' : `${(v * 100).toFixed(dec).replace('.', ',')} %`);
-const num = (v, dec = 2) => (v == null || Number.isNaN(v) ? 'n/d' : v.toFixed(dec).replace('.', ','));
+export const pct = (v, dec = 0) => (v == null || Number.isNaN(v) ? 'n/d' : `${(v * 100).toFixed(dec).replace('.', ',')} %`);
+export const num = (v, dec = 2) => (v == null || Number.isNaN(v) ? 'n/d' : v.toFixed(dec).replace('.', ','));
 const n0 = (v) => (v == null ? 0 : Number(v) || 0);
 
 /** Referencia por defecto del informe: GREFA-AGU-AAAA-MMDD-HHMM. */

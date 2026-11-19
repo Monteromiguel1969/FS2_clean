@@ -204,7 +204,14 @@ export const MANUAL = [
   {
     id: 'presentacion', grupo: 'nidos', titulo: 'Presentación PowerPoint',
     html: `
-<p>El botón <b>Presentación</b> (junto a <b>Informes</b>) descarga directamente un <code>.pptx</code> con la selección actual de nidos (mismos filtros que el informe): portada con el ámbito, totales, gráficos, mapa (con el fondo elegido), fotos de los nidos con URL pública y tabla. Las celdas sin dato quedan en blanco y no incluye propietarios ni teléfonos. Abre en PowerPoint y se puede importar a Google Slides desde Drive.</p>`,
+<p>El botón <b>Presentación</b> (junto a <b>Informes</b>) abre el mismo cuadro que el informe técnico y <b>descarga directamente un .pptx</b>, sin pasos manuales.</p>
+<ol>
+  <li><b>Nidos incluidos</b>: selección actual del panel (se muestra el recuento y el filtro) o todos los nidos.</li>
+  <li>Rellena título, referencia, destinatario (opcional), elaborado por y cargo (opcional).</li>
+  <li>Marca las <b>secciones</b> (las mismas que el informe, incluida la ficha técnica por nido) y los <b>mapas</b> (general, por comunidades, provincias y localidades) con el fondo Mapa u Ortofoto.</li>
+  <li>Edita el texto de <b>observaciones y conclusiones</b> y pulsa <b>Descargar PowerPoint</b>.</li>
+</ol>
+<p class="ay-nota">La presentación solo lleva lo marcado, con gráficos, un mapa por grupo (sin conexión, solo puntos), tablas y fichas. Las celdas sin dato quedan en blanco y no incluye propietario, teléfono ni referencia catastral. Las fichas incluyen la foto pública del nido si se puede descargar.</p>`,
   },
   {
     id: 'csv', grupo: 'nidos', titulo: 'Exportar a CSV (Excel)',

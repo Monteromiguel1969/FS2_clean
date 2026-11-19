@@ -184,7 +184,7 @@ export async function renderMapa(puntos, { ancho = 760, alto = 380, titulo = '',
  * @param {{general?:boolean, comunidad?:boolean, provincia?:boolean, localidad?:boolean}} niveles
  * @param {(hecho:number, total:number) => void} [progreso]
  */
-export async function generarMapas(nidos, niveles, agruparPorNivel, progreso = () => {}, tituloGeneral = 'Todos los nidos', fondo = FONDO_DEFECTO) {
+export async function generarMapas(nidos, niveles, agruparPorNivel, progreso = () => {}, tituloGeneral = 'Todos los nidos', fondo = FONDO_DEFECTO, escala = 1) {
   const trabajos = [];
   if (niveles.general) trabajos.push({ nivel: 'general', titulo: tituloGeneral, lista: nidos });
   for (const nivel of ['comunidad', 'provincia', 'localidad']) {
@@ -197,14 +197,16 @@ export async function generarMapas(nidos, niveles, agruparPorNivel, progreso = (
     const puntos = puntosDe(t.lista);
     if (puntos.length) {
       const etiquetar = t.nivel === 'localidad' || t.nivel === 'provincia' ? puntos.length <= 14 : t.nivel === 'general' ? false : puntos.length <= 14;
+      const ancho = Math.round((t.nivel === 'general' ? 760 : 560) * escala);
+      const alto = Math.round((t.nivel === 'general' ? 400 : 330) * escala);
       const dataUrl = await renderMapa(puntos, {
-        ancho: t.nivel === 'general' ? 760 : 560,
-        alto: t.nivel === 'general' ? 400 : 330,
+        ancho,
+        alto,
         titulo: t.titulo,
         etiquetar,
         fondo,
       });
-      mapas.push({ nivel: t.nivel, titulo: t.titulo, n: puntos.length, dataUrl });
+      mapas.push({ nivel: t.nivel, titulo: t.titulo, n: puntos.length, dataUrl, ancho, alto });
     }
     progreso(++hecho, trabajos.length);
   }

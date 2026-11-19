@@ -1,8 +1,9 @@
 // Interfaz de emisión de informes: configuración → borrador editable → PDF / Word.
 import {
   SECCIONES, anioCampana, construirInforme, construirInformeNido, documentoHtml, esc, nombreArchivo,
-  referenciaPorDefecto,
+  referenciaPorDefecto, textoConclusiones,
 } from './informe.js';
+import { crearPresentacionUI } from './presentacion_ui.js';
 import { agruparPorNivel } from './geo.js';
 import { posicion } from './logic.js';
 import { generarMapas, tituloMapaGeneral } from './mapa_img.js';
@@ -45,10 +46,14 @@ export async function guardarArchivo(contenido, nombre, mime, ext) {
 }
 
 /**
- * @param {{dlg:HTMLDialogElement, seleccion:object[], todos:object[], filtros:string, geo?:object, alCambiarFondo?:(id:string)=>void, email:string, nido?:object|null}} ctx
+ * Diálogo de configuración del informe técnico; con `formato: 'pptx'` es el mismo cuadro
+ * (mismas secciones, mapas y datos de firma) pero descarga directamente una presentación PowerPoint.
+ * @param {{dlg:HTMLDialogElement, seleccion:object[], todos:object[], filtros:string, geo?:object, alCambiarFondo?:(id:string)=>void, email:string, nido?:object|null, formato?:'informe'|'pptx'}} ctx
  */
 export function abrirInformesUI(ctx) {
-  const { dlg, nido } = ctx;
+  const { dlg } = ctx;
+  const pptx = ctx.formato === 'pptx';
+  const nido = pptx ? null : ctx.nido;
   const firma = leerFirma();
   const hoy = new Date();
   const nombreAutor = firma.autor ?? (ctx.email ? ctx.email.split('@')[0].replace(/[._]/g, ' ') : '');
@@ -56,14 +61,18 @@ export function abrirInformesUI(ctx) {
   const anio = anioCampana(nido ? [nido] : ctx.seleccion, hoy);
   const tituloDef = nido
     ? `Informe técnico del nido ${nido.etiqueta || nido.numeracion || ''}`
-    : `Informe técnico de seguimiento reproductor · Campaña Aguilucho ${anio}`;
+    : pptx
+      ? `Presentación de seguimiento reproductor · Campaña Aguilucho ${anio}`
+      : `Informe técnico de seguimiento reproductor · Campaña Aguilucho ${anio}`;
 
   const pintarConfig = () => {
     dlg.innerHTML = `<form method="dialog" id="inf-form" class="inf-config">
-      <div class="dlg-cab"><h2>${nido ? `Informe del nido ${esc(nido.etiqueta || nido.numeracion || '')}` : 'Emitir informe técnico'}</h2>${ayudaBtn('informes')}
+      <div class="dlg-cab"><h2>${nido ? `Informe del nido ${esc(nido.etiqueta || nido.numeracion || '')}` : pptx ? 'Crear presentación PowerPoint' : 'Emitir informe técnico'}</h2>${ayudaBtn(pptx ? 'presentacion' : 'informes')}
         <button type="button" class="btn" id="inf-cerrar">Cerrar</button></div>
       <div class="dlg-cuerpo">
-        <p class="info">Los datos y cifras se calculan automáticamente; el texto es un borrador que podrás <b>editar libremente</b> antes de emitir el informe (PDF o Word).</p>
+        <p class="info">${pptx
+          ? 'Los datos y cifras se calculan automáticamente. La presentación solo incluye lo que marques abajo y se <b>descarga directamente</b> como archivo .pptx; el texto de observaciones lo puedes editar aquí antes de generarla.'
+          : 'Los datos y cifras se calculan automáticamente; el texto es un borrador que podrás <b>editar libremente</b> antes de emitir el informe (PDF o Word).'}</p>
         ${nido ? '' : `
         <div class="campo ancho"><label for="inf-ambito">Nidos incluidos</label>
           <select id="inf-ambito">
@@ -78,7 +87,7 @@ export function abrirInformesUI(ctx) {
           <div class="campo"><label for="inf-cargo">Cargo (opcional)</label><input type="text" id="inf-cargo" value="${esc(firma.cargo ?? '')}" /></div>
         </div>
         ${nido ? '' : `
-        <fieldset><legend>Secciones del informe</legend>
+        <fieldset><legend>${pptx ? 'Secciones de la presentación' : 'Secciones del informe'}</legend>
           <div class="checks">${SECCIONES.map((s) => `<label><input type="checkbox" name="inf-sec" value="${s.id}" ${s.defecto ? 'checked' : ''}/> ${esc(s.label)}</label>`).join('')}</div>
         </fieldset>
         <fieldset><legend>Mapas de localización</legend>
@@ -90,15 +99,25 @@ export function abrirInformesUI(ctx) {
           </div>
           <div>${htmlSelectorFondo(leerFondo(), 'inf-fondo')}</div>
           <div class="info">Se genera un mapa por grupo, con los nidos coloreados por resultado, sobre el fondo elegido: mapa (OpenStreetMap) u ortofoto (PNOA); con conexión, sin ella solo se dibujan los puntos. Más niveles = más mapas y más tiempo.</div>
-        </fieldset>`}
+        </fieldset>
+        ${pptx ? `<div class="campo ancho"><label for="inf-obs">Observaciones y conclusiones (texto editable)</label>
+          <textarea id="inf-obs" rows="7">${esc(textoConclusiones(ctx.seleccion))}</textarea></div>` : ''}`}
       </div>
       <div class="dlg-pie">
         <span class="msg" id="inf-msg"></span>
-        <button type="submit" class="btn primario" id="inf-generar">Generar borrador</button>
+        <button type="submit" class="btn primario" id="inf-generar">${pptx ? 'Descargar PowerPoint' : 'Generar borrador'}</button>
       </div></form>`;
     document.getElementById('inf-cerrar').onclick = () => dlg.close();
     const selFondo = document.getElementById('inf-fondo');
     if (selFondo) selFondo.onchange = () => { guardarFondo(selFondo.value); ctx.alCambiarFondo?.(selFondo.value); };
+    const obs = document.getElementById('inf-obs');
+    const ambitoSel = document.getElementById('inf-ambito');
+    if (obs && ambitoSel) {
+      obs.oninput = () => { obs.dataset.editado = '1'; };
+      ambitoSel.onchange = () => {
+        if (!obs.dataset.editado) obs.value = textoConclusiones(ambitoSel.value === 'todos' ? ctx.todos : ctx.seleccion);
+      };
+    }
     document.getElementById('inf-form').onsubmit = async (ev) => {
       ev.preventDefault();
       const aviso = (t) => { document.getElementById('inf-msg').textContent = t; };
@@ -139,6 +158,19 @@ export function abrirInformesUI(ctx) {
         const niveles = Object.fromEntries(
           [...document.querySelectorAll('input[name="inf-mapa"]')].map((i) => [i.value, i.checked]),
         );
+        if (pptx) {
+          const todos = lista === ctx.todos;
+          await crearPresentacionUI({
+            lista,
+            opciones: { ...opciones, filtros: todos ? '' : ctx.filtros, geo: todos ? {} : ctx.geo, observaciones: document.getElementById('inf-obs').value.trim() },
+            secciones,
+            niveles,
+            fondo: leerFondo(),
+            tituloGeneral: todos ? 'Todos los nidos' : tituloMapaGeneral(ctx.geo),
+            aviso,
+          });
+          return;
+        }
         let mapas = [];
         if (Object.values(niveles).some(Boolean)) {
           mapas = await generarMapas(lista, niveles, agruparPorNivel, (h, t) => aviso(`Generando mapas de localización (${h}/${t})…`),
@@ -154,7 +186,7 @@ export function abrirInformesUI(ctx) {
       }
       pintarEditor(documentoHtml(cuerpo, opciones.titulo), opciones);
       } catch (e) {
-        aviso(`No se pudo generar el informe: ${e.message ?? e}`);
+        aviso(`No se pudo generar ${pptx ? 'la presentación' : 'el informe'}: ${e.message ?? e}`);
       } finally {
         boton.disabled = false; // si el editor ya sustituyó el formulario, no tiene efecto
       }
